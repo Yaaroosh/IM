@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+venv/
+
+# Database
+*.db
+
+# Local testing scripts
+backend/test_api.py
+backend/test_ws.py
+backend/check_db.py
+
+# Node/React
+frontend/node_modules/
+
