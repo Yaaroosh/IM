@@ -1,4 +1,5 @@
-from fastapi import FastAPI, Depends, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Depends, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi.middleware.cors import CORSMiddleware # <--- הוספה קריטית 1
 from sqlalchemy.orm import Session
 from database import Base, engine, get_db
 from models import User, Message
@@ -12,6 +13,17 @@ Base.metadata.create_all(bind=engine)
 app = FastAPI()
 
 # -------------------------
+# CORS Configuration - חובה בשביל React
+# -------------------------
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"], # הכתובת של ה-React
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# -------------------------
 # Pydantic Schemas
 # -------------------------
 class UserCreate(BaseModel):
@@ -23,7 +35,7 @@ class UserResponse(BaseModel):
     username: str
 
     class Config:
-        orm_mode = True
+        from_attributes = True # או orm_mode בגרסאות ישנות יותר
 
 class MessageResponse(BaseModel):
     id: int
@@ -33,10 +45,10 @@ class MessageResponse(BaseModel):
     timestamp: datetime
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 # -------------------------
-# REST API - כמו קודם
+# REST API
 # -------------------------
 @app.post("/register", response_model=UserResponse)
 def register(user: UserCreate, db: Session = Depends(get_db)):
@@ -72,7 +84,7 @@ def get_messages(other_user_id: int, current_user_id: int, db: Session = Depends
 # -------------------------
 # WebSocket – Real-time chat
 # -------------------------
-active_connections: Dict[int, WebSocket] = {}  # user_id -> websocket
+active_connections: Dict[int, WebSocket] = {}
 
 @app.websocket("/ws/{user_id}")
 async def websocket_endpoint(websocket: WebSocket, user_id: int, db: Session = Depends(get_db)):
@@ -101,5 +113,6 @@ async def websocket_endpoint(websocket: WebSocket, user_id: int, db: Session = D
                 })
 
     except WebSocketDisconnect:
-        print(f"User {user_id} disconnected")
-        del active_connections[user_id]
+        # print(f"User {user_id} disconnected") # אופציונלי
+        if user_id in active_connections:
+            del active_connections[user_id]
