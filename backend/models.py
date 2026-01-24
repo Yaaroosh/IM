@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from database import Base
@@ -19,6 +19,7 @@ class Message(Base):
     recipient_id = Column(Integer, ForeignKey("users.id"))
     content = Column(String)
     timestamp = Column(DateTime, default=datetime.utcnow)
+    is_read = Column(Boolean, default=False) 
 
     sender = relationship("User", foreign_keys=[sender_id], back_populates="messages_sent")
     recipient = relationship("User", foreign_keys=[recipient_id], back_populates="messages_received")

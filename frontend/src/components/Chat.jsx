@@ -27,50 +27,62 @@ function Chat({ user, onLogout }) {
     try {
       const res = await axios.get(`http://localhost:8000/users?current_user_id=${user.id}`);
       setUsers(res.data);
+
+      // --- מונים של הודעות שלא נקראו מהשרת ---
+      const counts = {};
+      res.data.forEach(u => {
+        if (u.unread_count > 0) {
+            counts[u.id] = u.unread_count;
+        }
+      });
+      setUnreadCounts(counts); // סנכרון המצב עם מה ששמור בשרת
+      // ------------------------------------------------
+
     } catch (err) {
       console.error("Error fetching users:", err);
     }
   };
 
-  // 2. חיבור ל-WebSocket וטעינה ראשונית
+ // 2. חיבור ל-WebSocket + רענון אוטומטי של הרשימה
   useEffect(() => {
     fetchUsers(); // טעינה ראשונה כשנכנסים
 
+    // א. חיבור ל-WebSocket
     const socket = new WebSocket(`ws://localhost:8000/ws/${user.id}`);
     
     socket.onmessage = (event) => {
       const msg = JSON.parse(event.data);
-      
-      // --- התיקון הקריטי כאן ---
-      // בכל פעם שמגיעה הודעה, אנחנו מרעננים את רשימת המשתמשים.
-      // ככה אם משתמש חדש שלח הודעה, הוא יופיע מיד ברשימה בלי ריענון!
-      fetchUsers(); 
-
-      // עדכון הצ'אט וההתראות
+      fetchUsers(); // רענון כשיש הודעה חדשה
       handleIncomingMessage(msg);
     };
 
     socketRef.current = socket;
-    return () => socket.close();
+
+    // ב. מנגנון דגימה (Polling) - מרענן את רשימת המשתמשים כל 3 שניות
+    const intervalId = setInterval(() => {
+        fetchUsers();
+    }, 3000);
+
+    // ניקוי ביציאה (סגירת סוקט וביטול הטיימר)
+    return () => {
+      socket.close();
+      clearInterval(intervalId);
+    };
   }, [user.id]);
 
   const handleIncomingMessage = (msg) => {
     setActiveChat((currentActive) => {
-        // המרה למספרים ליתר ביטחון
         const msgSenderId = Number(msg.sender_id);
         const currentActiveId = currentActive ? Number(currentActive.id) : null;
         const myId = Number(user.id);
 
-        // אם אנחנו בדיוק בשיחה עם השולח - נוסיף את ההודעה למסך
+        // אם אנחנו בשיחה עם השולח - נוסיף את ההודעה למסך
         if (currentActive && (msgSenderId === currentActiveId || msgSenderId === myId)) {
             setMessages((prev) => [...prev, msg]);
-        } else {
-            // אחרת - נוסיף התראה אדומה ליד השם שלו
-            setUnreadCounts((prev) => ({
-                ...prev,
-                [msgSenderId]: (prev[msgSenderId] || 0) + 1
-            }));
-        }
+        } 
+        // שימי לב: אנחנו לא צריכים יותר לעדכן ידנית את ה-unreadCounts כאן,
+        // כי הפונקציה fetchUsers למעלה עושה את זה בצורה מדויקת יותר מול השרת.
+        
         return currentActive;
     });
   };
@@ -84,17 +96,20 @@ function Chat({ user, onLogout }) {
   const selectUser = async (otherUser) => {
     setActiveChat(otherUser);
     
-    // איפוס ההתראות של המשתמש הזה
+    // איפוס ההתראות של המשתמש הזה (גם מקומית וגם בשרת זה יתעדכן כשימשכו ההודעות)
     setUnreadCounts((prev) => {
         const newCounts = { ...prev };
         delete newCounts[otherUser.id];
         return newCounts;
     });
 
-    // משיכת היסטוריית ההודעות
     try {
+      // משיכת הודעות (זה גם יסמן אותן כ"נקראו" בשרת בגלל העדכון שעשינו בבאקנד)
       const res = await axios.get(`http://localhost:8000/messages/${otherUser.id}?current_user_id=${user.id}`);
       setMessages(res.data);
+      
+      // רענון נוסף כדי לוודא שהמספרים בשרת התאפסו
+      fetchUsers();
     } catch (err) {
       console.error("Failed to fetch messages", err);
     }
@@ -109,7 +124,7 @@ function Chat({ user, onLogout }) {
     if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
         socketRef.current.send(JSON.stringify(payload));
         
-        // הוספה מיידית למסך שלנו (כדי שלא נחכה לשרת)
+        // הוספה מיידית למסך שלנו
         setMessages((prev) => [...prev, { 
             sender_id: user.id, 
             recipient_id: activeChat.id, 

@@ -1,23 +1,29 @@
 from pydantic import BaseModel
 from datetime import datetime
 
-class UserCreate(BaseModel):
+class UserBase(BaseModel):
     username: str
+
+class UserCreate(UserBase):
     password: str
 
-class UserResponse(BaseModel):
+class UserPublic(UserBase):
     id: int
-    username: str
+    unread_count: int = 0 
 
     class Config:
         from_attributes = True
 
-class MessageResponse(BaseModel):
-    id: int
+class MessageCreate(BaseModel):
+    recipient_id: int
+    content: str
+
+class MessagePublic(BaseModel):
     sender_id: int
     recipient_id: int
     content: str
     timestamp: datetime
+    is_read: bool 
 
     class Config:
         from_attributes = True

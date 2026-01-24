@@ -1,26 +1,35 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from database import get_db
-from models import User
-import schemas
+import models, schemas
 
-router = APIRouter(tags=["Authentication"])
+router = APIRouter()
 
-@router.post("/register", response_model=schemas.UserResponse)
+@router.post("/register", response_model=schemas.UserPublic)
 def register(user: schemas.UserCreate, db: Session = Depends(get_db)):
-    existing = db.query(User).filter(User.username == user.username).first()
-    if existing:
-        raise HTTPException(status_code=400, detail="Username already exists")
+    # בדיקה אם המשתמש קיים
+    existing_user = db.query(models.User).filter(models.User.username == user.username).first()
+    if existing_user:
+        raise HTTPException(status_code=400, detail="Username already taken")
     
-    new_user = User(username=user.username, password=user.password)
+    new_user = models.User(username=user.username, password=user.password)
+    
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
+    
     return new_user
 
-@router.post("/login", response_model=schemas.UserResponse)
-def login(user: schemas.UserCreate, db: Session = Depends(get_db)):
-    db_user = db.query(User).filter(User.username == user.username).first()
-    if not db_user or db_user.password != user.password:
-        raise HTTPException(status_code=400, detail="Invalid username or password")
-    return db_user
+@router.post("/login", response_model=schemas.UserPublic)
+def login(user_credentials: schemas.UserCreate, db: Session = Depends(get_db)):
+    # חיפוש המשתמש
+    user = db.query(models.User).filter(models.User.username == user_credentials.username).first()
+    
+    if not user:
+        raise HTTPException(status_code=403, detail="Invalid Credentials")
+    
+    # בדיקת סיסמה  
+    if user.password != user_credentials.password:
+        raise HTTPException(status_code=403, detail="Invalid Credentials")
+    
+    return user
