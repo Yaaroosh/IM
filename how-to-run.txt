@@ -1,0 +1,26 @@
+python -m venv venv
+
+venv\Scripts\Activate
+^^^ if doesnt work run: Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+    and then run it again
+
+cd backend
+pip install -r requirements.txt
+uvicorn main:app --reload (make sure ur on (venv) before running it)
+
+cd ..
+cd frontend
+
+REQUIRED Node.js version 20.19+ or 22.12+
+    check version with node -v
+    upgrade if necessary, from website
+    Reinstall deps (important after major Node change)
+        Remove-Item -Recurse -Force node_modules
+        Remove-Item package-lock.json
+        node -v (to make sure the update worked)
+
+npm install
+npm install -D tailwindcss@3 postcss autoprefixer(like css)
+npx tailwindcss init -p
+npm install lucide-react
+npm run dev

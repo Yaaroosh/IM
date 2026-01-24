@@ -1,8 +1,11 @@
 import { useState } from "react";
 import axios from "axios";
 import Chat from "./components/Chat";
+import Login from "./components/Login"; // YAARA
 
 function App() {
+  
+  const testNewLogin = new URLSearchParams(window.location.search).get("newLogin") === "1"; // YAARA
   const [user, setUser] = useState(null); // המשתמש המחובר
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -23,6 +26,13 @@ function App() {
     }
   };
 
+  if (testNewLogin) {// BLOCK YAARA
+    return (
+      <div className="min-h-screen">
+        <Login />
+      </div>
+    );
+  } //END BLOCK YAARA
   return (
     <div className="h-screen bg-gray-100 flex items-center justify-center font-sans">
       {!user ? (
