@@ -36,13 +36,8 @@ function Login({ onLogin }) {
       <div className="hidden lg:flex flex-1 bg-gradient-to-br from-blue-900 to-slate-900 items-center justify-center relative overflow-hidden">
         <div className="absolute top-0 left-0 w-full h-full bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20"></div>
         <div className="relative z-10 text-center px-10">
-            <div className="w-24 h-24 bg-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-8 shadow-2xl shadow-blue-500/30 rotate-3 transform hover:rotate-6 transition duration-500">
-                <MessageSquare size={48} className="text-white" />
-            </div>
-            <h1 className="text-5xl font-bold text-white mb-6 leading-tight">Connect with<br/>Your Friends.</h1>
-            <p className="text-blue-200 text-lg max-w-md mx-auto leading-relaxed">
-                Secure, fast, and real-time messaging designed for you. Join our community today and start chatting properly.
-            </p>
+            <img src="/logo2.png" className="w-64 mx-auto mb-6" />
+            <h1 className="text-5xl font-bold text-white mb-6 leading-tight">Chatty<br/>for chatty people.</h1>
         </div>
         
         {/* עיגולי רקע לקישוט */}
@@ -55,10 +50,10 @@ function Login({ onLogin }) {
         <div className="w-full max-w-md space-y-8">
             <div className="text-center lg:text-left">
                 <h2 className="text-3xl font-bold text-white tracking-tight">
-                    {isRegistering ? "Create an account" : "Welcome back"}
+                    {isRegistering ? "Create an account" : "Welcome"}
                 </h2>
                 <p className="mt-2 text-slate-400">
-                    {isRegistering ? "Please fill in your details to sign up." : "Enter your credentials to access your account."}
+                    {isRegistering ? "Please fill in your details to sign up." : "Enter your credentials to start chatting."}
                 </p>
             </div>
 
@@ -143,7 +138,7 @@ function Login({ onLogin }) {
 
         {/* קרדיט קטן למטה */}
         <div className="absolute bottom-6 text-slate-600 text-xs">
-            &copy; 2026 IM App. Secure & Encrypted.
+            &copy; 2026 Chatty IM App. Secure & Encrypted. YABA Team.
         </div>
       </div>
     </div>
