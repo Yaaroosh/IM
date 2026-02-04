@@ -2,7 +2,6 @@ import { useState, useEffect, useRef } from "react";
 import axios from "axios";
 import { MessageSquare, Phone, Video, MoreVertical, LogOut } from "lucide-react";
 
-// פונקציה לבחירת צבע רקע לפי שם המשתמש
 const getAvatarColor = (name) => {
   const colors = ["bg-blue-500", "bg-purple-500", "bg-pink-500", "bg-indigo-500", "bg-teal-500", "bg-orange-500"];
   let hash = 0;
@@ -22,81 +21,81 @@ function Chat({ user, onLogout }) {
   const socketRef = useRef(null);
   const messagesEndRef = useRef(null);
 
-  // 1. פונקציה שמושכת את רשימת המשתמשים מהשרת
   const fetchUsers = async () => {
     try {
       const res = await axios.get(`http://localhost:8000/users?current_user_id=${user.id}`);
       setUsers(res.data);
-
-      // --- מונים של הודעות שלא נקראו מהשרת ---
       const counts = {};
       res.data.forEach(u => {
-        if (u.unread_count > 0) {
-            counts[u.id] = u.unread_count;
+        // --- תיקון 1: המגן הויזואלי ---
+        // אם יש הודעות שלא נקראו, אבל זה המשתמש שאני בשיחה איתו כרגע -> תתעלם מהמונה
+        if (activeChat && u.id === activeChat.id) {
+            return; 
         }
+        
+        if (u.unread_count > 0) counts[u.id] = u.unread_count;
       });
-      setUnreadCounts(counts); // סנכרון המצב עם מה ששמור בשרת
-      // ------------------------------------------------
-
+      setUnreadCounts(counts); 
     } catch (err) {
       console.error("Error fetching users:", err);
     }
   };
 
- // 2. חיבור ל-WebSocket + רענון אוטומטי של הרשימה
   useEffect(() => {
-    fetchUsers(); // טעינה ראשונה כשנכנסים
+    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) return;
 
-    // א. חיבור ל-WebSocket
+    fetchUsers();
+
     const socket = new WebSocket(`ws://localhost:8000/ws/${user.id}`);
-    
-    socket.onmessage = (event) => {
-      const msg = JSON.parse(event.data);
-      fetchUsers(); // רענון כשיש הודעה חדשה
-      handleIncomingMessage(msg);
-    };
-
     socketRef.current = socket;
 
-    // ב. מנגנון דגימה (Polling) - מרענן את רשימת המשתמשים כל 3 שניות
-    const intervalId = setInterval(() => {
-        fetchUsers();
-    }, 3000);
+    socket.onmessage = (event) => {
+      const msg = JSON.parse(event.data);
+      
+      const msgSenderId = Number(msg.sender_id);
+      const currentActiveId = activeChat ? Number(activeChat.id) : null;
 
-    // ניקוי ביציאה (סגירת סוקט וביטול הטיימר)
+      // --- תיקון 2: עדכון השרת ---
+      // אם קיבלנו הודעה ממי שאנחנו מדברים איתו כרגע, נשלח בקשה מהירה לסמן אותה כ"נקראה"
+      if (activeChat && msgSenderId === currentActiveId) {
+          try {
+            axios.get(`http://localhost:8000/messages/${msgSenderId}?current_user_id=${user.id}`);
+          } catch (e) {
+            console.error("Failed to mark read silently");
+          }
+      }
+
+      setMessages((prevMessages) => {
+          // סינון כפילויות (UUID)
+          if (msg.temp_id && prevMessages.some(m => m.temp_id === msg.temp_id)) {
+              return prevMessages; 
+          }
+
+          // הוספה למסך אם רלוונטי
+          const myId = Number(user.id);
+          if (activeChat && (msgSenderId === currentActiveId || msgSenderId === myId)) {
+             return [...prevMessages, msg];
+          }
+          return prevMessages;
+      });
+      
+      fetchUsers(); 
+    };
+
+    const intervalId = setInterval(fetchUsers, 3000);
+
     return () => {
       socket.close();
       clearInterval(intervalId);
     };
-  }, [user.id]);
+  }, [user.id, activeChat]); 
 
-  const handleIncomingMessage = (msg) => {
-    setActiveChat((currentActive) => {
-        const msgSenderId = Number(msg.sender_id);
-        const currentActiveId = currentActive ? Number(currentActive.id) : null;
-        const myId = Number(user.id);
-
-        // אם אנחנו בשיחה עם השולח - נוסיף את ההודעה למסך
-        if (currentActive && (msgSenderId === currentActiveId || msgSenderId === myId)) {
-            setMessages((prev) => [...prev, msg]);
-        } 
-        // שימי לב: אנחנו לא צריכים יותר לעדכן ידנית את ה-unreadCounts כאן,
-        // כי הפונקציה fetchUsers למעלה עושה את זה בצורה מדויקת יותר מול השרת.
-        
-        return currentActive;
-    });
-  };
-
-  // גלילה אוטומטית למטה כשיש הודעה חדשה
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // בחירת משתמש לשיחה
   const selectUser = async (otherUser) => {
     setActiveChat(otherUser);
-    
-    // איפוס ההתראות של המשתמש הזה (גם מקומית וגם בשרת זה יתעדכן כשימשכו ההודעות)
     setUnreadCounts((prev) => {
         const newCounts = { ...prev };
         delete newCounts[otherUser.id];
@@ -104,33 +103,36 @@ function Chat({ user, onLogout }) {
     });
 
     try {
-      // משיכת הודעות (זה גם יסמן אותן כ"נקראו" בשרת בגלל העדכון שעשינו בבאקנד)
       const res = await axios.get(`http://localhost:8000/messages/${otherUser.id}?current_user_id=${user.id}`);
       setMessages(res.data);
-      
-      // רענון נוסף כדי לוודא שהמספרים בשרת התאפסו
       fetchUsers();
     } catch (err) {
       console.error("Failed to fetch messages", err);
     }
   };
 
-  // שליחת הודעה
   const sendMessage = () => {
     if (!newMessage.trim() || !activeChat) return;
     
-    const payload = { recipient_id: activeChat.id, content: newMessage };
+    const tempId = crypto.randomUUID(); 
+
+    const payload = { 
+        recipient_id: activeChat.id, 
+        content: newMessage,
+        temp_id: tempId 
+    };
     
     if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
         socketRef.current.send(JSON.stringify(payload));
         
-        // הוספה מיידית למסך שלנו
         setMessages((prev) => [...prev, { 
             sender_id: user.id, 
             recipient_id: activeChat.id, 
             content: newMessage, 
-            timestamp: new Date().toISOString() 
+            timestamp: new Date().toISOString(),
+            temp_id: tempId 
         }]);
+        
         setNewMessage("");
     }
   };
@@ -138,10 +140,8 @@ function Chat({ user, onLogout }) {
   return (
     <div className="flex h-screen bg-[#0f172a] text-slate-200 font-sans overflow-hidden">
       
-      {/* סרגל צד - רשימת משתמשים */}
+      {/* סרגל צד */}
       <div className="w-80 bg-[#1e293b] flex flex-col border-r border-slate-700/50">
-        
-        {/* כותרת הצד */}
         <div className="p-4 border-b border-slate-700/50 flex items-center justify-between">
             <div className="flex items-center gap-3">
                 <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-bold ${getAvatarColor(user.username)}`}>
@@ -157,7 +157,6 @@ function Chat({ user, onLogout }) {
             </button>
         </div>
 
-        {/* רשימת המשתמשים */}
         <div className="flex-1 overflow-y-auto px-2 space-y-1 mt-2">
             {users.map((u) => (
                 <div 
@@ -170,7 +169,6 @@ function Chat({ user, onLogout }) {
                         <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-medium ${getAvatarColor(u.username)}`}>
                             {u.username[0].toUpperCase()}
                         </div>
-                        {/* נקודה ירוקה */}
                         <span className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-[#1e293b] rounded-full"></span>
                     </div>
                     
@@ -179,8 +177,6 @@ function Chat({ user, onLogout }) {
                             <h4 className={`font-medium truncate ${unreadCounts[u.id] ? "text-white font-bold" : "text-slate-200"}`}>
                                 {u.username}
                             </h4>
-                            
-                            {/* עיגול כחול להודעות חדשות */}
                             {unreadCounts[u.id] > 0 && (
                                 <span className="bg-blue-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[1.25rem] text-center">
                                     {unreadCounts[u.id]}
@@ -196,11 +192,10 @@ function Chat({ user, onLogout }) {
         </div>
       </div>
 
-      {/* אזור הצ'אט המרכזי */}
+      {/* צ'אט */}
       <div className="flex-1 flex flex-col bg-[#0f172a] relative">
         {activeChat ? (
             <>
-                {/* כותרת הצ'אט */}
                 <div className="h-16 border-b border-slate-700/50 flex items-center justify-between px-6 bg-[#1e293b]/50 backdrop-blur-sm">
                     <div className="flex items-center gap-3">
                         <div className={`w-9 h-9 rounded-full flex items-center justify-center text-white text-sm font-bold ${getAvatarColor(activeChat.username)}`}>
@@ -215,7 +210,6 @@ function Chat({ user, onLogout }) {
                     </div>
                 </div>
 
-                {/* הודעות */}
                 <div className="flex-1 overflow-y-auto p-6 space-y-4 custom-scrollbar">
                     {messages.map((msg, idx) => {
                          const isMe = Number(msg.sender_id) === Number(user.id);
@@ -235,7 +229,6 @@ function Chat({ user, onLogout }) {
                     <div ref={messagesEndRef} />
                 </div>
 
-                {/* תיבת טקסט */}
                 <div className="p-4 bg-[#1e293b]/30">
                     <div className="flex items-center gap-2 bg-slate-800 rounded-full px-4 py-2 border border-slate-700">
                         <input 
