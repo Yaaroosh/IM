@@ -8,7 +8,7 @@ router = APIRouter(tags=["WebSocket"])
 
 class ConnectionManager:
     def __init__(self):
-        # מילון לשמירת החיבורים הפעילים: מזהה משתמש -> אובייקט WebSocket
+        # Maps user_id to their active WebSocket connection
         self.active_connections: Dict[int, WebSocket] = {}
 
     async def connect(self, websocket: WebSocket, user_id: int):
@@ -24,7 +24,7 @@ class ConnectionManager:
             try:
                 await self.active_connections[user_id].send_json(message)
             except RuntimeError:
-                # טיפול במקרה שבו החיבור נסגר פתאום
+                # Handle cases where the connection dropped unexpectedly
                 self.disconnect(user_id)
 
 manager = ConnectionManager()
@@ -34,42 +34,39 @@ async def websocket_endpoint(websocket: WebSocket, user_id: int, db: Session = D
     await manager.connect(websocket, user_id)
     try:
         while True:
-            # 1. קבלת המידע (כולל ה-temp_id החדש!)
+            # 1. Receive incoming data
             data = await websocket.receive_json()
             
-            # שימוש ב-.get כדי לא לקרוס אם המפתח חסר
+            # Use .get() to safely extract fields
             recipient_id = data.get("recipient_id")
             content = data.get("content")
-            temp_id = data.get("temp_id") # <--- הנה המזהה הייחודי שהוספנו
+            temp_id = data.get("temp_id") 
 
             if recipient_id and content:
-                # שמירה ב-DB (כרגיל, בלי ה-temp_id כי הוא לא נשמר בבסיס הנתונים)
+                # 2. Save to Database (temp_id is not saved to DB)
                 message = Message(sender_id=user_id, recipient_id=recipient_id, content=content)
                 db.add(message)
                 db.commit()
                 db.refresh(message)
 
-                # בניית התשובה שתשלח ללקוחות
+                # 3. Construct response payload (echoing temp_id back)
                 response = {
                     "id": message.id,
                     "sender_id": user_id,
                     "recipient_id": recipient_id,
                     "content": content,
                     "timestamp": str(message.timestamp),
-                    "temp_id": temp_id # <--- מחזירים את המזהה חזרה ללקוחות
+                    "temp_id": temp_id 
                 }
 
-                # 2. שליחה לנמען (Try)
+                # 4. Send to recipient
                 await manager.send_personal_json(response, recipient_id)
                 
-                # 3. שליחה חזרה גם לשולח (Ariel)
-                # זה קריטי כדי שאריאל תקבל אישור מהשרת שההודעה נשמרה,
-                # וה-Chat.jsx שלה יוכל לזהות לפי ה-temp_id שזו הודעה שהוא כבר מכיר
+                # 5. Echo back to sender (critical for frontend deduplication)
                 await manager.send_personal_json(response, user_id)
 
     except WebSocketDisconnect:
         manager.disconnect(user_id)
     except Exception as e:
-        # תמיד טוב להדפיס שגיאות כדי לדעת אם משהו קרס
         print(f"Error in WebSocket: {e}")
         manager.disconnect(user_id)
