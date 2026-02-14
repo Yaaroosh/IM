@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from database import engine, Base
-from routers import auth, chat, websocket
+from routers import auth, chat, websocket, keys
 
 # יצירת הטבלאות
 Base.metadata.create_all(bind=engine)
@@ -21,6 +21,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(chat.router)
 app.include_router(websocket.router)
+app.include_router(keys.router)
 
 @app.get("/")
 def read_root():

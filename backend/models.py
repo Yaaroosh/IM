@@ -23,3 +23,26 @@ class Message(Base):
 
     sender = relationship("User", foreign_keys=[sender_id], back_populates="messages_sent")
     recipient = relationship("User", foreign_keys=[recipient_id], back_populates="messages_received")
+
+    # --- Signal Protocol Keys Tables ---
+
+class IdentityKey(Base):
+    __tablename__ = "identity_keys"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), unique=True)
+    public_key = Column(String)
+
+class SignedPreKey(Base):
+    __tablename__ = "signed_prekeys"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), unique=True)
+    key_id = Column(Integer)
+    public_key = Column(String)
+    signature = Column(String)
+
+class OneTimePreKey(Base):
+    __tablename__ = "onetime_prekeys"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    key_id = Column(Integer)
+    public_key = Column(String)
