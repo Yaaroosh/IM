@@ -7,7 +7,6 @@ router = APIRouter()
 
 @router.post("/register", response_model=schemas.UserPublic)
 def register(user: schemas.UserCreate, db: Session = Depends(get_db)):
-    # בדיקה אם המשתמש קיים
     existing_user = db.query(models.User).filter(models.User.username == user.username).first()
     if existing_user:
         raise HTTPException(status_code=400, detail="Username already taken")
@@ -22,13 +21,11 @@ def register(user: schemas.UserCreate, db: Session = Depends(get_db)):
 
 @router.post("/login", response_model=schemas.UserPublic)
 def login(user_credentials: schemas.UserCreate, db: Session = Depends(get_db)):
-    # חיפוש המשתמש
     user = db.query(models.User).filter(models.User.username == user_credentials.username).first()
     
     if not user:
         raise HTTPException(status_code=403, detail="Invalid Credentials")
     
-    # בדיקת סיסמה  
     if user.password != user_credentials.password:
         raise HTTPException(status_code=403, detail="Invalid Credentials")
     
