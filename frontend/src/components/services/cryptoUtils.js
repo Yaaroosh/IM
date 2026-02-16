@@ -36,3 +36,16 @@ export function generateOneTimePreKeys(count) {
 export function computeDH(secretKey, publicKey) {
     return nacl.scalarMult(secretKey, publicKey);
 }
+
+export function encryptMessage(plaintext, sk) {
+
+    const nonce = nacl.randomBytes(nacl.secretbox.nonceLength);
+    const messageUint8 = util.decodeUTF8(plaintext);
+    const ciphertext = nacl.secretbox(messageUint8, nonce, sk);
+
+
+    return {
+        nonce: util.encodeBase64(nonce),
+        ciphertext: util.encodeBase64(ciphertext)
+    };
+}
