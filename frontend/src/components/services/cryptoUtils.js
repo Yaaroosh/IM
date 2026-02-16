@@ -8,3 +8,10 @@ export function generateIdentityKeyPair() {
         secretKey: keyPair.secretKey
     };
 }
+export function generateSignedPreKeyPair() {
+    const keyPair = nacl.box.keyPair();
+    return {
+        publicKey: keyPair.publicKey,
+        secretKey: keyPair.secretKey
+    };
+}
