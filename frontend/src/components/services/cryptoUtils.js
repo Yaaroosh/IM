@@ -19,3 +19,16 @@ export function generateSignedPreKeyPair() {
 export function signPreKey(spkPublicKey, ikSecretKey) {
     return nacl.sign.detached(spkPublicKey, ikSecretKey);
 }
+
+export function generateOneTimePreKeys(count) {
+    const opks = [];
+    for (let i = 0; i < count; i++) {
+        const keyPair = nacl.box.keyPair();
+        opks.push({
+            id: util.encodeBase64(nacl.randomBytes(4)),
+            publicKey: keyPair.publicKey,
+            secretKey: keyPair.secretKey
+        });
+    }
+    return opks;
+}
