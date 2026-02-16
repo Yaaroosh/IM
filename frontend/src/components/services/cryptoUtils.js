@@ -15,3 +15,7 @@ export function generateSignedPreKeyPair() {
         secretKey: keyPair.secretKey
     };
 }
+
+export function signPreKey(spkPublicKey, ikSecretKey) {
+    return nacl.sign.detached(spkPublicKey, ikSecretKey);
+}
