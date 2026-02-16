@@ -32,3 +32,7 @@ export function generateOneTimePreKeys(count) {
     }
     return opks;
 }
+
+export function computeDH(secretKey, publicKey) {
+    return nacl.scalarMult(secretKey, publicKey);
+}
