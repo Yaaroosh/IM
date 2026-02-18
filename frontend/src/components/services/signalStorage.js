@@ -16,3 +16,16 @@ export function getPrivateKey(keyId) //keyID - e.g IK or SPK or the specific ID 
     }
     return util.decodeBase64(base64Key);
 }
+
+export function saveRootKey(sessionId, rootKeyUint8) {
+    const base64Key = util.encodeBase64(rootKeyUint8);
+    localStorage.setItem(`rootKey_${sessionId}`, base64Key);
+}
+
+export function getRootKey(sessionId) {
+    const base64Key = localStorage.getItem(`rootKey_${sessionId}`);
+    if (!base64Key) {
+        return null;
+    }
+    return util.decodeBase64(base64Key);
+}
