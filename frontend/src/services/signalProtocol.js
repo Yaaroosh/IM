@@ -59,7 +59,7 @@ export async function registerUser(userId) {
 
 // ==========================================
 // 2. X3DH Handshake (Start Session)
-// ==========================================
+//===========================================
 export async function startSessionWithContact(myUserId, contactId) {
     try {
         console.log(`Starting X3DH handshake with ${contactId}`);
@@ -91,10 +91,10 @@ export async function startSessionWithContact(myUserId, contactId) {
         }
 
         // 6. Derive the initial Chain Key
-        const nextChainKey = crypto.deriveInitialChainKey(dh1, dh2, dh3, dh4);
+        const initialChainKey = crypto.deriveInitialChainKey(dh1, dh2, dh3, dh4);
 
         // 7. Save the session state (Chain Key) in local storage
-        storage.saveSessionState(contactId, nextChainKey);
+        storage.saveSessionState(contactId, initialChainKey);
         
         console.log(`X3DH complete! Chain Key established with ${contactId}`);
         
@@ -105,6 +105,70 @@ export async function startSessionWithContact(myUserId, contactId) {
 
     } catch (error) {
         console.error(`Handshake failed with ${contactId}:`, error);
+        throw error;
+    }
+}
+
+// ==========================================
+// 3. Prepare Encrypted Message
+// ==========================================
+export async function encryptOutgoingMessage(contactId, plaintext) {
+    try {
+        // Retrieve the current Chain Key from the local Storage
+        let currentChainKey = storage.getSessionState(contactId);
+        
+        if (!currentChainKey) {
+            throw new Error(`No active session with ${contactId}. Handshake required.`);
+        }
+
+        // The symmetric ratchet: derive a unique Message Key and the next Chain Key
+        const { messageKey, nextChainKey } = crypto.deriveNextKeys(currentChainKey);
+
+        // Encrypt the plaintext using the newly derived Message Key
+        const encryptedData = crypto.encryptMessage(plaintext, messageKey);
+
+        // Update storage with the new Chain Key (erasing the old one for Forward Secrecy)
+        storage.saveSessionState(contactId, nextChainKey);
+
+        return {
+        ciphertext: encryptedData.ciphertext,
+        nonce: encryptedData.nonce
+    };
+
+    } catch (error) {
+        console.error("Failed to encrypt message:", error);
+        throw error;
+    }
+}
+
+// ==========================================
+// 4. Decrypt Received Message
+// ==========================================
+export async function decryptReceivedMessage(contactId, ciphertext, nonce) {
+    try {
+        // 1. Retrieve the current Chain Key from storage
+        let currentChainKey = storage.getSessionState(contactId);
+
+        if (!currentChainKey) {
+            // If no key exists, it means we haven't established a session with this user yet
+            throw new Error(`No active session for contact: ${contactId}`);
+        }
+
+        // 2. Step the symmetric ratchet forward
+        // We MUST do this to get the exact Message Key the sender used
+        const { messageKey, nextChainKey } = crypto.deriveNextKeys(currentChainKey);
+
+        // 3. Perform the actual decryption
+        const plaintext = crypto.decryptMessage(ciphertext, nonce, messageKey);
+
+        // 4. Update storage with the new Chain Key
+        // Now the storage is ready for the NEXT message from this contact
+        storage.saveSessionState(contactId, nextChainKey);
+
+        return plaintext;
+
+    } catch (error) {
+        console.error("Decryption failed:", error);
         throw error;
     }
 }
