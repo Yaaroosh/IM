@@ -64,7 +64,7 @@ export async function startSessionWithContact(myUserId, contactId) {
     try {
         console.log(`Starting X3DH handshake with ${contactId}`);
 
-        // 1. Retrieve my local keys
+        // 1. Retrieve my local private keys
         const myKeys = storage.getMyKeys(myUserId);
         if (!myKeys) throw new Error("No local keys found. Register first.");
 
@@ -109,8 +109,51 @@ export async function startSessionWithContact(myUserId, contactId) {
     }
 }
 
+// Receiver side: Initialize session from the first incoming message (X3DH)
+export async function initializeSessionAsReceiver(myUserId, contactId, theirEphemeralKey, theirIdentityKey, theirOpkId = null) {
+    try {
+        console.log(`Initializing incoming session from contact: ${contactId}`);
+
+        // 1. Retrieve my local private keys
+        const myKeys = storage.getMyKeys(myUserId);
+        if (!myKeys) throw new Error("Local keys missing. Please register first.");
+
+        // 2. Calculate the 4 DH shared secrets from the receiver's perspective
+        const dh1 = crypto.computeDH(myKeys.spk, theirIdentityKey);
+        const dh2 = crypto.computeDH(myKeys.ik, theirEphemeralKey);
+        const dh3 = crypto.computeDH(myKeys.spk, theirEphemeralKey);
+
+        // DH4 - Only if an OPK was used
+        let dh4 = "";
+        if (theirOpkId) {
+            const myOpk = myKeys.opks.find(k => k.key_id === theirOpkId);
+            if (myOpk) {
+                dh4 = crypto.computeDH(myOpk.secretKey, theirEphemeralKey);
+            }
+        }
+
+        // 3. Derive the exact same initial Chain Key
+        const initialChainKey = crypto.deriveInitialChainKey(dh1, dh2, dh3, dh4);
+
+        // 4. Save the established session state
+        storage.saveSessionState(contactId, initialChainKey);
+        
+        if (theirOpkId) {
+            storage.removeUsedOPK(myUserId, theirOpkId);
+        }
+        
+        console.log(`Session with ${contactId} successfully established as receiver.`);
+        return initialChainKey;
+
+    } catch (error) {
+        console.error("Failed to initialize receiver session:", error);
+        throw error;
+    }
+}
+
+
 // ==========================================
-// 3. Prepare Encrypted Message
+// 3. Encrypted Message
 // ==========================================
 export async function encryptOutgoingMessage(contactId, plaintext) {
     try {

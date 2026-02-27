@@ -18,7 +18,16 @@ export function getMyKeys(userId) {
     try {
         const serialized = localStorage.getItem(`${MY_KEYS_PREFIX}${userId}`);
         if (!serialized) return null;
-        return JSON.parse(serialized);
+        const keys = JSON.parse(serialized);
+
+        return {
+            ik: new Uint8Array(Object.values(keys.ik)),
+            spk: new Uint8Array(Object.values(keys.spk)),
+            opks: keys.opks.map(k => ({
+                key_id: k.key_id,
+                secretKey: new Uint8Array(Object.values(k.secretKey))
+            }))
+        };
     } catch (error) {
         console.error("Error loading my keys:", error);
         return null;
