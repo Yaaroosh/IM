@@ -4,17 +4,8 @@ import util from 'tweetnacl-util';
 const toBase64 = util.encodeBase64;
 const fromBase64 = util.decodeBase64;
 
-// Generate Identity Key
-export function generateIdentityKeyPair() {
-    const keyPair = nacl.box.keyPair();
-    return {
-        publicKey: toBase64(keyPair.publicKey),
-        secretKey: toBase64(keyPair.secretKey)
-    };
-}
-
-// Generate Signed PreKey
-export function generateSignedPreKeyPair() {
+// Generate Key
+export function generateKeyPair() {
     const keyPair = nacl.box.keyPair();
     return {
         publicKey: toBase64(keyPair.publicKey),
@@ -82,14 +73,40 @@ export function decryptMessage(ciphertextBase64, nonceBase64, sharedSecretBase64
     return util.encodeUTF8(decryptedBytes);
 }
 
+
+// X3DH: Derive Initial Chain Key using SHA-512
+export function deriveInitialChainKey(dh1Base64, dh2Base64, dh3Base64, dh4Base64 = "") {
+    const dh1 = fromBase64(dh1Base64);
+    const dh2 = fromBase64(dh2Base64);
+    const dh3 = fromBase64(dh3Base64);
+    const dh4 = dh4Base64 ? fromBase64(dh4Base64) : new Uint8Array(0);
+
+    const totalLength = dh1.length + dh2.length + dh3.length + dh4.length;
+    const combined = new Uint8Array(totalLength);
+    
+    combined.set(dh1, 0);
+    combined.set(dh2, dh1.length);
+    combined.set(dh3, dh1.length + dh2.length);
+    if (dh4.length > 0) {
+        combined.set(dh4, dh1.length + dh2.length + dh3.length);
+    }
+
+    const hashResult = nacl.hash(combined);
+
+    const chainKeyUint8 = hashResult.slice(0, 32); 
+    return toBase64(chainKeyUint8);
+}
+
+
 // Symmetric Ratchet: Hash the current chain key to get a message key and next chain key
 export function deriveNextKeys(currentChainKeyBase64) {
     const currentChainKeyUint8 = util.decodeBase64(currentChainKeyBase64);
     
-    const hashResult = nacl.hash(currentChainKeyUint8);
+    const constantForMessageKey = new Uint8Array([1]);
+    const constantForNextChainKey = new Uint8Array([2])
     
-    const messageKeyUint8 = hashResult.slice(0, 32);
-    const nextChainKeyUint8 = hashResult.slice(32, 64);
+    const messageKeyUint8 = nacl.auth(constantForMessageKey, currentChainKeyUint8); //nacl.auth is the implementation of HMAC
+    const nextChainKeyUint8 = nacl.auth(constantForNextChainKey, currentChainKeyUint8);
     
     return {
         messageKey: util.encodeBase64(messageKeyUint8),
