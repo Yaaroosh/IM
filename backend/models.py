@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean
+from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Boolean
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from database import Base
@@ -17,7 +17,10 @@ class Message(Base):
     id = Column(Integer, primary_key=True, index=True)
     sender_id = Column(Integer, ForeignKey("users.id"))
     recipient_id = Column(Integer, ForeignKey("users.id"))
-    content = Column(String)
+    ciphertext = Column(Text, nullable=False)
+    nonce = Column(String, nullable=False)
+    ephemeral_public_key = Column(String, nullable=True)
+    used_opk_id = Column(Integer, nullable=True)
     timestamp = Column(DateTime, default=datetime.utcnow)
     is_read = Column(Boolean, default=False) 
 

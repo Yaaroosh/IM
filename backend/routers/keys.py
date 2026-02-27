@@ -8,6 +8,8 @@ router = APIRouter(prefix="/keys", tags=["Signal Keys"])
 
 @router.post("/upload/{user_id}")
 def upload_keys(user_id: int, bundle: schemas_keys.BundleUploadRequest, db: Session = Depends(get_db)):
+    db.query(models.IdentityKey).filter(models.IdentityKey.user_id == user_id).delete()
+    db.query(models.SignedPreKey).filter(models.SignedPreKey.user_id == user_id).delete()
     # 1. Save Identity Key
     new_ik = models.IdentityKey(
         user_id=user_id, 

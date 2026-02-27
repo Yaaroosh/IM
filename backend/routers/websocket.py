@@ -37,24 +37,36 @@ async def websocket_endpoint(websocket: WebSocket, user_id: int, db: Session = D
             # 1. Receive incoming data
             data = await websocket.receive_json()
             
-            # Use .get() to safely extract fields
             recipient_id = data.get("recipient_id")
-            content = data.get("content")
-            temp_id = data.get("temp_id") 
+            ciphertext = data.get("ciphertext")
+            nonce = data.get("nonce")
+            temp_id = data.get("temp_id")
+            ephemeral_public_key = data.get("ephemeral_public_key")
+            used_opk_id = data.get("used_opk_id")
 
-            if recipient_id and content:
-                # 2. Save to Database (temp_id is not saved to DB)
-                message = Message(sender_id=user_id, recipient_id=recipient_id, content=content)
+            if recipient_id and ciphertext and nonce:
+                # 2. Save to Database 
+                message = Message(
+                    sender_id=user_id, 
+                    recipient_id=recipient_id, 
+                    ciphertext=ciphertext,
+                    nonce=nonce,
+                    ephemeral_public_key=ephemeral_public_key,
+                    used_opk_id=used_opk_id
+                )
                 db.add(message)
                 db.commit()
                 db.refresh(message)
 
-                # 3. Construct response payload (echoing temp_id back)
+                # 3. Construct response payload
                 response = {
                     "id": message.id,
                     "sender_id": user_id,
                     "recipient_id": recipient_id,
-                    "content": content,
+                    "ciphertext": ciphertext,
+                    "nonce": nonce,
+                    "ephemeral_public_key": ephemeral_public_key,
+                    "used_opk_id": used_opk_id,
                     "timestamp": str(message.timestamp),
                     "temp_id": temp_id 
                 }
