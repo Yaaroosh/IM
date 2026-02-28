@@ -1,6 +1,7 @@
 import { useState } from "react";
 import axios from "axios";
 import { User, Lock, ArrowRight, MessageSquare, Loader2 } from "lucide-react";
+import { registerUser } from "../services/signalProtocol";
 
 function Login({ onLogin }) {
   const [isRegistering, setIsRegistering] = useState(false);
@@ -21,6 +22,9 @@ function Login({ onLogin }) {
         username,
         password,
       });
+      if (isRegistering){
+        await registerUser(res.data.id);
+      }
       onLogin(res.data);
     } catch (err) {
       setError(err.response?.data?.detail || "Something went wrong. Please try again.");
