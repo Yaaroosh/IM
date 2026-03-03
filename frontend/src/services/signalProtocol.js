@@ -79,6 +79,10 @@ export async function startSessionWithContact(myUserId, contactId) {
         const dh1 = crypto.computeDH(myKeys.ik, contactBundle.signed_prekey.public_key);
         const dh2 = crypto.computeDH(myEphemeralKey.secretKey, contactBundle.identity_key);
         const dh3 = crypto.computeDH(myEphemeralKey.secretKey, contactBundle.signed_prekey.public_key);
+
+        console.log("%c[SENDER DEBUG] DH1:", "color: #3b82f6", dh1);
+        console.log("%c[SENDER DEBUG] DH2:", "color: #3b82f6", dh2);
+        console.log("%c[SENDER DEBUG] DH3:", "color: #3b82f6", dh3);
         
         let dh4 = "";
         let usedOpkId = null;
@@ -90,6 +94,8 @@ export async function startSessionWithContact(myUserId, contactId) {
             usedOpkId = contactOpk.key_id;
         }
 
+        console.log("%c[SENDER DEBUG] DH4:", "color: #3b82f6", dh4 || "EMPTY/NULL");
+
         // 6. Derive the initial Chain Key
         const initialChainKey = crypto.deriveInitialChainKey(dh1, dh2, dh3, dh4);
 
@@ -97,6 +103,9 @@ export async function startSessionWithContact(myUserId, contactId) {
         storage.saveSessionState(contactId, initialChainKey);
         
         console.log(`X3DH complete! Chain Key established with ${contactId}`);
+
+        // שורת בדיקה קריטית!!!
+        console.log("%c[SENDER] Initial Chain Key:", "color: orange", initialChainKey);
         
         return {
             ephemeralPublicKey: myEphemeralKey.publicKey,
@@ -123,14 +132,26 @@ export async function initializeSessionAsReceiver(myUserId, contactId, theirEphe
         const dh2 = crypto.computeDH(myKeys.ik, theirEphemeralKey);
         const dh3 = crypto.computeDH(myKeys.spk, theirEphemeralKey);
 
+        console.log("%c[RECEIVER DEBUG] DH1:", "color: #10b981", dh1);
+        console.log("%c[RECEIVER DEBUG] DH2:", "color: #10b981", dh2);
+        console.log("%c[RECEIVER DEBUG] DH3:", "color: #10b981", dh3);
+
         // DH4 - Only if an OPK was used
         let dh4 = "";
-        if (theirOpkId) {
-            const myOpk = myKeys.opks.find(k => k.key_id === theirOpkId);
+        if (theirOpkId !== null && theirOpkId !== undefined) {
+            console.log(`[RECEIVER] Searching for OPK ID: ${theirOpkId}`);
+            const myOpk = myKeys.opks.find(k => String(k.key_id) === String(theirOpkId));
             if (myOpk) {
                 dh4 = crypto.computeDH(myOpk.secretKey, theirEphemeralKey);
+                console.log("%c[RECEIVER] DH4 Computed Successfully!", "color: green");
+            }else{
+                console.error(`%c[RECEIVER] OPK ID ${theirOpkId} not found in my storage!`, "color: red");
             }
+        }else{
+            console.warn("[RECEIVER] No OPK ID was provided in the handshake message.");
         }
+        
+        console.log("%c[RECEIVER DEBUG] DH4:", "color: #10b981", dh4 || "EMPTY/NULL");
 
         // 3. Derive the exact same initial Chain Key
         const initialChainKey = crypto.deriveInitialChainKey(dh1, dh2, dh3, dh4);
@@ -138,11 +159,15 @@ export async function initializeSessionAsReceiver(myUserId, contactId, theirEphe
         // 4. Save the established session state
         storage.saveSessionState(contactId, initialChainKey);
         
-        if (theirOpkId) {
-            storage.removeUsedOPK(myUserId, theirOpkId);
-        }
+        //if (theirOpkId) {
+        //    storage.removeUsedOPK(myUserId, theirOpkId);
+        //}
         
         console.log(`Session with ${contactId} successfully established as receiver.`);
+
+        // שורת בדיקה קריטית!!!
+        console.log("%c[RECEIVER] Initial Chain Key:", "color: orange", initialChainKey);
+
         return initialChainKey;
 
     } catch (error) {
@@ -157,29 +182,41 @@ export async function initializeSessionAsReceiver(myUserId, contactId, theirEphe
 // ==========================================
 export async function encryptOutgoingMessage(contactId, plaintext) {
     try {
-        // Retrieve the current Chain Key from the local Storage
         let currentChainKey = storage.getSessionState(contactId);
         
         if (!currentChainKey) {
-            throw new Error(`No active session with ${contactId}. Handshake required.`);
+            throw new Error(`No active session with ${contactId}.`);
         }
 
-        // The symmetric ratchet: derive a unique Message Key and the next Chain Key
-        const { messageKey, nextChainKey } = crypto.deriveNextKeys(currentChainKey);
+        // שלב הראצ'ט
+        const derived = crypto.deriveNextKeys(currentChainKey);
+        console.log("Derived keys:", derived); // בדיקה שהמפתחות נוצרו
 
-        // Encrypt the plaintext using the newly derived Message Key
-        const encryptedData = crypto.encryptMessage(plaintext, messageKey);
+        if (!derived || !derived.messageKey) {
+            throw new Error("Failed to derive Message Key");
+        }
 
-        // Update storage with the new Chain Key (erasing the old one for Forward Secrecy)
-        storage.saveSessionState(contactId, nextChainKey);
+        // שורת בדיקה קריטית!!!
+        console.log(`%c[SENDER] Message Key: ${derived.messageKey}`, "color: blue; font-weight: bold");
+
+        // שלב ההצפנה
+        const encryptedData = crypto.encryptMessage(plaintext, derived.messageKey);
+        console.log("Encrypted payload:", encryptedData); // בדיקה שההצפנה הצליחה
+
+        // שורת בדיקה קריטית!!!
+        console.log(`%c[SENDER] Nonce: ${encryptedData.nonce}`, "color: blue");
+
+        // עדכון ה-Storage
+        storage.saveSessionState(contactId, derived.nextChainKey);
 
         return {
-        ciphertext: encryptedData.ciphertext,
-        nonce: encryptedData.nonce
-    };
+            ciphertext: encryptedData.ciphertext,
+            nonce: encryptedData.nonce
+        };
 
     } catch (error) {
-        console.error("Failed to encrypt message:", error);
+        // כאן נראה את השגיאה המפורטת ב-Console
+        console.error("Critical Failure in encryptOutgoingMessage:", error);
         throw error;
     }
 }
@@ -194,12 +231,16 @@ export async function decryptReceivedMessage(contactId, ciphertext, nonce) {
 
         if (!currentChainKey) {
             // If no key exists, it means we haven't established a session with this user yet
-            throw new Error(`No active session for contact: ${contactId}`);
+            throw new Error(`No active session`);
         }
 
         // 2. Step the symmetric ratchet forward
         // We MUST do this to get the exact Message Key the sender used
         const { messageKey, nextChainKey } = crypto.deriveNextKeys(currentChainKey);
+
+        // שורת בדיקה קריטית!!!!
+        console.log(`%c[RECEIVER] Message Key: ${messageKey}`, "color: green; font-weight: bold");
+        console.log(`%c[RECEIVER] Nonce from msg: ${nonce}`, "color: green");
 
         // 3. Perform the actual decryption
         const plaintext = crypto.decryptMessage(ciphertext, nonce, messageKey);
@@ -207,6 +248,7 @@ export async function decryptReceivedMessage(contactId, ciphertext, nonce) {
         // 4. Update storage with the new Chain Key
         // Now the storage is ready for the NEXT message from this contact
         storage.saveSessionState(contactId, nextChainKey);
+
 
         return plaintext;
 

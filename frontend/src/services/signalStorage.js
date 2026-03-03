@@ -18,16 +18,8 @@ export function getMyKeys(userId) {
     try {
         const serialized = localStorage.getItem(`${MY_KEYS_PREFIX}${userId}`);
         if (!serialized) return null;
-        const keys = JSON.parse(serialized);
-
-        return {
-            ik: new Uint8Array(Object.values(keys.ik)),
-            spk: new Uint8Array(Object.values(keys.spk)),
-            opks: keys.opks.map(k => ({
-                key_id: k.key_id,
-                secretKey: new Uint8Array(Object.values(k.secretKey))
-            }))
-        };
+        
+        return JSON.parse(serialized); 
     } catch (error) {
         console.error("Error loading my keys:", error);
         return null;
@@ -86,4 +78,23 @@ export function clearAllStorage() {
     } catch (error) {
         console.error("Error clearing Signal storage:", error);
     }
+}
+
+// שמירת הודעה מפוענחת להיסטוריה המקומית
+export function saveLocalMessage(currentUserId, contactId, message) {
+    const key = `history_${currentUserId}_to_${contactId}`;
+    const history = JSON.parse(localStorage.getItem(key) || "[]");
+    
+    // מניעת כפילויות לפני שמירה
+    const exists = history.some(m => m.temp_id === message.temp_id || (m.id && m.id === message.id));
+    if (!exists) {
+        history.push(message);
+        localStorage.setItem(key, JSON.stringify(history));
+    }
+}
+
+// שליפת היסטוריה מקומית
+export function getLocalHistory(currentUserId, contactId) {
+    const key = `history_${currentUserId}_to_${contactId}`;
+    return JSON.parse(localStorage.getItem(key) || "[]");
 }

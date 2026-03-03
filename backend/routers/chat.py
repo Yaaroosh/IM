@@ -39,13 +39,16 @@ def get_messages(other_user_id: int, current_user_id: int, db: Session = Depends
         ((models.Message.sender_id == other_user_id) & (models.Message.recipient_id == current_user_id))
     ).order_by(models.Message.timestamp).all()
 
-    # Update: Mark all unread messages received from this contact as "read"
+    return messages
+
+# 3. Mark messages as read without fetching history
+@router.post("/messages/read/{other_user_id}")
+def mark_messages_as_read(other_user_id: int, current_user_id: int, db: Session = Depends(get_db)):
     db.query(models.Message).filter(
         models.Message.sender_id == other_user_id,
         models.Message.recipient_id == current_user_id,
         models.Message.is_read == False
     ).update({"is_read": True})
     
-    db.commit() 
-
-    return messages
+    db.commit()
+    return {"status": "success"}

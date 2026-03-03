@@ -75,7 +75,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: int, db: Session = D
                 await manager.send_personal_json(response, recipient_id)
                 
                 # 5. Echo back to sender (critical for frontend deduplication)
-                await manager.send_personal_json(response, user_id)
+                #await manager.send_personal_json(response, user_id)
 
     except WebSocketDisconnect:
         manager.disconnect(user_id)
