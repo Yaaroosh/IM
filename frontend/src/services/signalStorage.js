@@ -46,10 +46,10 @@ export function removeUsedOPK(userId, usedKeyId) {
 }
 
 
-// Saves the current chain key for a specific contact
-export function saveSessionState(contactId, chainKeyBase64) {
+// Saves the current chain key for a specific contact of a specific user
+export function saveSessionState(myUserId, contactId, chainKeyBase64) {
     try {
-        localStorage.setItem(`${SESSION_PREFIX}${contactId}`, chainKeyBase64);
+        localStorage.setItem(`${SESSION_PREFIX}${myUserId}_with_${contactId}`, chainKeyBase64);
     } catch (error) {
         console.error(`Error saving session state for contact ${contactId}:`, error);
     }
@@ -57,9 +57,9 @@ export function saveSessionState(contactId, chainKeyBase64) {
 
 
 // Loads the current chain key to continue a conversation
-export function getSessionState(contactId) {
+export function getSessionState(myUserId, contactId) {
     try {
-        return localStorage.getItem(`${SESSION_PREFIX}${contactId}`);
+        return localStorage.getItem(`${SESSION_PREFIX}${myUserId}_with_${contactId}`);
     } catch (error) {
         console.error(`Error loading session state for contact ${contactId}:`, error);
         return null;
@@ -86,7 +86,11 @@ export function saveLocalMessage(currentUserId, contactId, message) {
     const history = JSON.parse(localStorage.getItem(key) || "[]");
     
     // מניעת כפילויות לפני שמירה
-    const exists = history.some(m => m.temp_id === message.temp_id || (m.id && m.id === message.id));
+    const exists = history.some(m => {
+        const isSameTemp = m.temp_id && message.temp_id && m.temp_id === message.temp_id;
+        const isSameId = m.id && message.id && m.id === message.id;
+        return isSameTemp || isSameId;
+    });
     if (!exists) {
         history.push(message);
         localStorage.setItem(key, JSON.stringify(history));

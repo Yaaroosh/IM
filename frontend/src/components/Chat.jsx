@@ -23,12 +23,14 @@ function Chat({ user, onLogout }) {
     const socketRef = useRef(null);
     const messagesEndRef = useRef(null);
     const activeChatRef = useRef(null);
+    
+    // מנעול למניעת כפל סנכרון במקביל
+    const isSyncingRef = useRef(false);
 
     useEffect(() => {
         activeChatRef.current = activeChat;
     }, [activeChat]);
 
-    // 1. טעינת רשימת משתמשים ומונים
     const fetchUsers = async () => {
         try {
             const res = await axios.get(`http://localhost:8000/users?current_user_id=${user.id}`);
@@ -46,18 +48,33 @@ function Chat({ user, onLogout }) {
         }
     };
 
-    // 2. סנכרון הודעות אופליין - התיקון כאן
     const syncOfflineMessages = async (currentUsers) => {
+        if (isSyncingRef.current) return;
+        isSyncingRef.current = true;
+
         try {
             const usersWithMessages = currentUsers.filter(u => u.unread_count > 0);
             
             for (const contact of usersWithMessages) {
                 const res = await axios.get(`http://localhost:8000/messages/${contact.id}?current_user_id=${user.id}`);
-                
-                for (const msg of res.data) {
-                    const history = storage.getLocalHistory(user.id, contact.id);
-                    // מניעת כפילויות
-                    if (history.some(m => m.id === msg.id || (msg.temp_id && m.temp_id === msg.temp_id))) continue;
+                // מיון חובה כדי לשמור על סדר הראצ'ט
+                const sortedMessages = res.data.sort((a, b) => a.id - b.id);
+                let decryptedBatch = [];
+
+                for (const msg of sortedMessages) {
+                    // הגנה 1: האם ההודעה כבר קיימת (לפי ID או לפי ה-Temp ID שניתן לה כששלחנו)
+                    const historyInStorage = storage.getLocalHistory(user.id, contact.id);
+                    const alreadyExists = historyInStorage.some(m => 
+                        (m.id && String(m.id) === String(msg.id)) || 
+                        (m.temp_id && msg.temp_id && String(m.temp_id) === String(msg.temp_id))
+                    );
+
+                    if (alreadyExists) continue;
+
+                    // הגנה 2: לעולם לא מנסים לפענח הודעות שאנחנו שלחנו
+                    if (String(msg.sender_id) === String(user.id)) {
+                        continue;
+                    }
 
                     try {
                         if (msg.ephemeral_public_key) {
@@ -67,37 +84,51 @@ function Chat({ user, onLogout }) {
                             );
                         }
 
-                        const decrypted = await signal.decryptReceivedMessage(msg.sender_id, msg.ciphertext, msg.nonce);
+                        // העברת ה-ID הקריטי כדי שהמנעול של הפרוטוקול יעבוד
+                        const decrypted = await signal.decryptReceivedMessage(user.id, msg.sender_id, msg.ciphertext, msg.nonce, msg.id);
                         const messageObj = { ...msg, content: decrypted };
                         
                         storage.saveLocalMessage(user.id, contact.id, messageObj);
+                        decryptedBatch.push(messageObj);
+
+                        await new Promise(r => setTimeout(r, 100)); // סנכרון כתיבה
                         
-                        // אם זה המשתמש שאנחנו כרגע בשיחה איתו, נעדכן את ה-State של ההודעות
-                        if (activeChatRef.current && Number(contact.id) === Number(activeChatRef.current.id)) {
-                            setMessages(prev => {
-                                if (prev.some(m => m.id === msg.id)) return prev;
-                                return [...prev, messageObj];
-                            });
-                        }
                     } catch (decErr) {
-                        console.error("Decryption failed for offline message:", decErr);
+                        // הגנה 3: תפיסת השגיאה היזומה מהמנעול בזיכרון
+                        if (decErr.message === "ALREADY_DECRYPTED") {
+                            console.log(`[UI SYNC] Message ${msg.id} was blocked by ratchet lock, fetching from DB...`);
+                            const currentHistory = storage.getLocalHistory(user.id, contact.id);
+                            const existingMsg = currentHistory.find(m => String(m.id) === String(msg.id));
+                            if (existingMsg) {
+                                decryptedBatch.push(existingMsg);
+                            }
+                        } else {
+                            console.error(`Decryption failed for msg ${msg.id}:`, decErr);
+                        }
                     }
                 }
+
+                // עדכון המסך רק אם המשתמש כרגע בחלון השיחה
+                if (decryptedBatch.length > 0 && activeChatRef.current && String(contact.id) === String(activeChatRef.current.id)) {
+                    setMessages(prev => {
+                        const existingIds = new Set(prev.map(m => m.id));
+                        const filtered = decryptedBatch.filter(m => !existingIds.has(m.id));
+                        return [...prev, ...filtered];
+                    });
+                }
             }
-        } catch (err) {
-            console.error("Sync offline failed:", err);
+        } finally {
+            isSyncingRef.current = false;
         }
     };
 
-    // 3. לוגיקת בחירת משתמש - מבטיח טעינה מלאה
     const selectUser = async (otherUser) => {
         setActiveChat(otherUser);
         
-        // טעינה ראשונית ממה שיש ב-Storage
-        const initialHistory = storage.getLocalHistory(user.id, otherUser.id);
-        setMessages(initialHistory);
+        // טעינה מיידית ממה שכבר שמור מקומית (סינכרוני)
+        const historyFromDisk = storage.getLocalHistory(user.id, otherUser.id);
+        setMessages(historyFromDisk);
 
-        // איפוס מונים ב-UI
         setUnreadCounts(prev => {
             const n = { ...prev };
             delete n[otherUser.id];
@@ -105,62 +136,90 @@ function Chat({ user, onLogout }) {
         });
 
         try {
-            // סימון כנקרא בשרת
             await axios.post(`http://localhost:8000/messages/read/${otherUser.id}?current_user_id=${user.id}`);
             
-            // משיכה אחרונה של הודעות מהשרת עבור המשתמש הספציפי הזה כדי לוודא שלא פוספס כלום
+            // משיכת הודעות מהשרת
             const res = await axios.get(`http://localhost:8000/messages/${otherUser.id}?current_user_id=${user.id}`);
-            if (res.data.length > 0) {
-                // מריץ סנכרון ספציפי למשתמש הזה
-                await syncOfflineMessages([{ ...otherUser, unread_count: res.data.length }]);
+            
+            // סינון מול הדיסק כדי למנוע סנכרון מיותר - כולל זיהוי לפי temp_id
+            const trulyNew = res.data.filter(serverMsg => {
+                const latestStorage = storage.getLocalHistory(user.id, otherUser.id);
+                return !latestStorage.some(localMsg => 
+                    (localMsg.id && String(localMsg.id) === String(serverMsg.id)) ||
+                    (localMsg.temp_id && serverMsg.temp_id && String(localMsg.temp_id) === String(serverMsg.temp_id))
+                );
+            });
+
+            if (trulyNew.length > 0 && !isSyncingRef.current) {
+                console.log(`[DEBUG] Syncing ${trulyNew.length} truly new messages for ${otherUser.username}`);
+                await syncOfflineMessages([{ ...otherUser, unread_count: trulyNew.length }]);
             }
         } catch (err) {
-            console.error("Error in selectUser sync:", err);
+            console.error("Select user sync error:", err);
         }
     };
 
-    // 4. WebSocket וניהול Lifecycle
     useEffect(() => {
         const init = async () => {
-            const currentUsers = await fetchUsers();
-            await syncOfflineMessages(currentUsers);
-        };
-        init();
-
-        const socket = new WebSocket(`ws://localhost:8000/ws/${user.id}`);
-        socketRef.current = socket;
-
-        socket.onmessage = async (event) => {
-            const msg = JSON.parse(event.data);
-            const msgSenderId = Number(msg.sender_id);
-            if (msgSenderId === Number(user.id)) return;
-
             try {
-                if (msg.ephemeral_public_key) {
-                    const res = await axios.get(`http://localhost:8000/keys/${msgSenderId}`);
-                    await signal.initializeSessionAsReceiver(user.id, msgSenderId, msg.ephemeral_public_key, res.data.identity_key, msg.used_opk_id);
-                }
+                const currentUsers = await fetchUsers();
+                await syncOfflineMessages(currentUsers);
 
-                const decryptedContent = await signal.decryptReceivedMessage(msgSenderId, msg.ciphertext, msg.nonce);
-                const messageObj = { ...msg, content: decryptedContent, timestamp: new Date().toISOString() };
+                const socket = new WebSocket(`ws://localhost:8000/ws/${user.id}`);
+                socketRef.current = socket;
 
-                storage.saveLocalMessage(user.id, msgSenderId, messageObj);
+                socket.onmessage = async (event) => {
+                    const msg = JSON.parse(event.data);
+                    const msgSenderId = Number(msg.sender_id);
+                    
+                    // לא מטפלים בהודעות של עצמנו מהשרת
+                    if (msgSenderId === Number(user.id)) return; 
 
-                if (activeChatRef.current && msgSenderId === Number(activeChatRef.current.id)) {
-                    axios.post(`http://localhost:8000/messages/read/${msgSenderId}?current_user_id=${user.id}`);
-                    setMessages((prev) => [...prev, messageObj]);
-                } else {
-                    setUnreadCounts(prev => ({ ...prev, [msgSenderId]: (prev[msgSenderId] || 0) + 1 }));
-                    fetchUsers(); // רענון הרשימה כדי לראות את המונה
-                }
+                    const history = storage.getLocalHistory(user.id, msgSenderId);
+                    
+                    // הגנה עם temp_id גם ב-WebSocket
+                    const alreadyExists = history.some(m => 
+                        (m.id && String(m.id) === String(msg.id)) || 
+                        (m.temp_id && msg.temp_id && String(m.temp_id) === String(msg.temp_id))
+                    );
+                    if (alreadyExists) return;
+
+                    try {
+                        if (msg.ephemeral_public_key) {
+                            const res = await axios.get(`http://localhost:8000/keys/${msgSenderId}`);
+                            await signal.initializeSessionAsReceiver(user.id, msgSenderId, msg.ephemeral_public_key, res.data.identity_key, msg.used_opk_id);
+                        }
+
+                        // הוספת ID להגנה הראצ'ט גם ב-WebSocket
+                        const decryptedContent = await signal.decryptReceivedMessage(user.id, msgSenderId, msg.ciphertext, msg.nonce, msg.id);
+                        const messageObj = { ...msg, content: decryptedContent, timestamp: new Date().toISOString() };
+
+                        storage.saveLocalMessage(user.id, msgSenderId, messageObj);
+
+                        if (activeChatRef.current && msgSenderId === Number(activeChatRef.current.id)) {
+                            axios.post(`http://localhost:8000/messages/read/${msgSenderId}?current_user_id=${user.id}`);
+                            setMessages((prev) => [...prev, messageObj]);
+                        } else {
+                            setUnreadCounts(prev => ({ ...prev, [msgSenderId]: (prev[msgSenderId] || 0) + 1 }));
+                            fetchUsers();
+                        }
+                    } catch (err) {
+                        if (err.message === "ALREADY_DECRYPTED") {
+                            // התעלם - ההודעה כבר מטופלת
+                        } else {
+                            console.error("WS Decryption error:", err);
+                        }
+                    }
+                };
             } catch (err) {
-                console.error("Real-time decryption failed:", err);
+                console.error("Init failed:", err);
             }
         };
 
+        init();
         const interval = setInterval(fetchUsers, 5000);
         return () => {
-            socket.close();
+            if (socketRef.current) socketRef.current.close();
             clearInterval(interval);
         };
     }, [user.id]);
@@ -171,22 +230,38 @@ function Chat({ user, onLogout }) {
 
     const sendMessage = async () => {
         if (!newMessage.trim() || !activeChat) return;
+        if (socketRef.current?.readyState !== WebSocket.OPEN) return;
+
         try {
             const tempId = crypto.randomUUID();
             let handshake = {};
-            if (!storage.getSessionState(activeChat.id)) {
+            
+            if (!storage.getSessionState(user.id, activeChat.id)) {
                 handshake = await signal.startSessionWithContact(user.id, activeChat.id);
             }
-            const enc = await signal.encryptOutgoingMessage(activeChat.id, newMessage);
-            const payload = { recipient_id: activeChat.id, ciphertext: enc.ciphertext, nonce: enc.nonce, temp_id: tempId, ephemeral_public_key: handshake.ephemeralPublicKey, used_opk_id: handshake.usedOpkId };
 
-            if (socketRef.current?.readyState === WebSocket.OPEN) {
-                socketRef.current.send(JSON.stringify(payload));
-                const myMsg = { sender_id: user.id, recipient_id: activeChat.id, content: newMessage, timestamp: new Date().toISOString(), temp_id: tempId };
-                storage.saveLocalMessage(user.id, activeChat.id, myMsg);
-                setMessages((prev) => [...prev, myMsg]);
-                setNewMessage("");
-            }
+            const enc = await signal.encryptOutgoingMessage(user.id, activeChat.id, newMessage);
+            const payload = { 
+                recipient_id: activeChat.id, 
+                ciphertext: enc.ciphertext, 
+                nonce: enc.nonce, 
+                temp_id: tempId, 
+                ephemeral_public_key: handshake.ephemeralPublicKey || null, 
+                used_opk_id: handshake.usedOpkId ?? null 
+            };
+
+            socketRef.current.send(JSON.stringify(payload));
+            
+            const myMsg = { 
+                sender_id: user.id, 
+                recipient_id: activeChat.id, 
+                content: newMessage, 
+                timestamp: new Date().toISOString(), 
+                temp_id: tempId 
+            };
+            storage.saveLocalMessage(user.id, activeChat.id, myMsg);
+            setMessages(prev => [...prev, myMsg]);
+            setNewMessage("");
         } catch (err) {
             console.error("Send failed:", err);
         }

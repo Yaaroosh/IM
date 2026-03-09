@@ -100,7 +100,7 @@ export async function startSessionWithContact(myUserId, contactId) {
         const initialChainKey = crypto.deriveInitialChainKey(dh1, dh2, dh3, dh4);
 
         // 7. Save the session state (Chain Key) in local storage
-        storage.saveSessionState(contactId, initialChainKey);
+        storage.saveSessionState(myUserId, contactId, initialChainKey);
         
         console.log(`X3DH complete! Chain Key established with ${contactId}`);
 
@@ -157,11 +157,11 @@ export async function initializeSessionAsReceiver(myUserId, contactId, theirEphe
         const initialChainKey = crypto.deriveInitialChainKey(dh1, dh2, dh3, dh4);
 
         // 4. Save the established session state
-        storage.saveSessionState(contactId, initialChainKey);
+        storage.saveSessionState(myUserId, contactId, initialChainKey);
         
-        //if (theirOpkId) {
-        //    storage.removeUsedOPK(myUserId, theirOpkId);
-        //}
+        if (theirOpkId) {
+            storage.removeUsedOPK(myUserId, theirOpkId);
+        }
         
         console.log(`Session with ${contactId} successfully established as receiver.`);
 
@@ -180,9 +180,9 @@ export async function initializeSessionAsReceiver(myUserId, contactId, theirEphe
 // ==========================================
 // 3. Encrypted Message
 // ==========================================
-export async function encryptOutgoingMessage(contactId, plaintext) {
+export async function encryptOutgoingMessage(myUserId, contactId, plaintext) {
     try {
-        let currentChainKey = storage.getSessionState(contactId);
+        let currentChainKey = storage.getSessionState(myUserId, contactId);
         
         if (!currentChainKey) {
             throw new Error(`No active session with ${contactId}.`);
@@ -190,7 +190,7 @@ export async function encryptOutgoingMessage(contactId, plaintext) {
 
         // שלב הראצ'ט
         const derived = crypto.deriveNextKeys(currentChainKey);
-        console.log("Derived keys:", derived); // בדיקה שהמפתחות נוצרו
+        console.log("Derived keys:", derived); 
 
         if (!derived || !derived.messageKey) {
             throw new Error("Failed to derive Message Key");
@@ -201,13 +201,13 @@ export async function encryptOutgoingMessage(contactId, plaintext) {
 
         // שלב ההצפנה
         const encryptedData = crypto.encryptMessage(plaintext, derived.messageKey);
-        console.log("Encrypted payload:", encryptedData); // בדיקה שההצפנה הצליחה
+        console.log("Encrypted payload:", encryptedData);
 
         // שורת בדיקה קריטית!!!
         console.log(`%c[SENDER] Nonce: ${encryptedData.nonce}`, "color: blue");
 
         // עדכון ה-Storage
-        storage.saveSessionState(contactId, derived.nextChainKey);
+        storage.saveSessionState(myUserId, contactId, derived.nextChainKey);
 
         return {
             ciphertext: encryptedData.ciphertext,
@@ -221,39 +221,47 @@ export async function encryptOutgoingMessage(contactId, plaintext) {
     }
 }
 
+
+const decryptedCache = new Set();
 // ==========================================
 // 4. Decrypt Received Message
 // ==========================================
-export async function decryptReceivedMessage(contactId, ciphertext, nonce) {
+export async function decryptReceivedMessage(myUserId, contactId, ciphertext, nonce, msgId) {
+    // מנעול זיכרון: אם ה-ID הזה כבר עבר פה בסשן הנוכחי, עוצרים מיד!
+    if (msgId && decryptedCache.has(msgId)) {
+        console.warn(`%c[BLOCKER] Message ${msgId} already decrypted! Stopping double ratchet.`, "color: #fbbf24; font-weight: bold;");
+        // זורקים שגיאה ייעודית שתיתפס ב-Chat.jsx בלי להרוס את הראצ'ט
+        throw new Error("ALREADY_DECRYPTED"); 
+    }
+
     try {
-        // 1. Retrieve the current Chain Key from storage
-        let currentChainKey = storage.getSessionState(contactId);
+        let currentChainKey = storage.getSessionState(myUserId, contactId);
 
         if (!currentChainKey) {
-            // If no key exists, it means we haven't established a session with this user yet
             throw new Error(`No active session`);
         }
 
-        // 2. Step the symmetric ratchet forward
-        // We MUST do this to get the exact Message Key the sender used
+        // קידום הראצ'ט 
         const { messageKey, nextChainKey } = crypto.deriveNextKeys(currentChainKey);
 
-        // שורת בדיקה קריטית!!!!
         console.log(`%c[RECEIVER] Message Key: ${messageKey}`, "color: green; font-weight: bold");
         console.log(`%c[RECEIVER] Nonce from msg: ${nonce}`, "color: green");
 
-        // 3. Perform the actual decryption
+        // עדכון ה-Storage במפתח החדש
+        storage.saveSessionState(myUserId, contactId, nextChainKey);
+
+        // מוסיפים את ההודעה ל"רשימה השחורה" כדי שלא תפוענח שוב
+        if (msgId) decryptedCache.add(msgId);
+
+        // פענוח בפועל
         const plaintext = crypto.decryptMessage(ciphertext, nonce, messageKey);
-
-        // 4. Update storage with the new Chain Key
-        // Now the storage is ready for the NEXT message from this contact
-        storage.saveSessionState(contactId, nextChainKey);
-
 
         return plaintext;
 
     } catch (error) {
-        console.error("Decryption failed:", error);
+        if (error.message !== "ALREADY_DECRYPTED") {
+            console.error("Decryption failed:", error);
+        }
         throw error;
     }
 }
