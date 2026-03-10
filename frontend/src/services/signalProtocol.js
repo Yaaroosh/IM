@@ -139,19 +139,15 @@ export async function initializeSessionAsReceiver(myUserId, contactId, theirEphe
         // DH4 - Only if an OPK was used
         let dh4 = "";
         if (theirOpkId !== null && theirOpkId !== undefined) {
-            console.log(`[RECEIVER] Searching for OPK ID: ${theirOpkId}`);
             const myOpk = myKeys.opks.find(k => String(k.key_id) === String(theirOpkId));
+            
             if (myOpk) {
                 dh4 = crypto.computeDH(myOpk.secretKey, theirEphemeralKey);
-                console.log("%c[RECEIVER] DH4 Computed Successfully!", "color: green");
-            }else{
-                console.error(`%c[RECEIVER] OPK ID ${theirOpkId} not found in my storage!`, "color: red");
+            } else {
+                // אם השולח השתמש במפתח, אבל אנחנו לא מוצאים אותו אצלנו - חייבים לעצור!
+                throw new Error("Missing required OPK for decryption.");
             }
-        }else{
-            console.warn("[RECEIVER] No OPK ID was provided in the handshake message.");
         }
-        
-        console.log("%c[RECEIVER DEBUG] DH4:", "color: #10b981", dh4 || "EMPTY/NULL");
 
         // 3. Derive the exact same initial Chain Key
         const initialChainKey = crypto.deriveInitialChainKey(dh1, dh2, dh3, dh4);
@@ -159,7 +155,7 @@ export async function initializeSessionAsReceiver(myUserId, contactId, theirEphe
         // 4. Save the established session state
         storage.saveSessionState(myUserId, contactId, initialChainKey);
         
-        if (theirOpkId) {
+        if (theirOpkId !== null && theirOpkId !== undefined) {
             storage.removeUsedOPK(myUserId, theirOpkId);
         }
         

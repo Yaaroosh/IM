@@ -78,7 +78,7 @@ function Chat({ user, onLogout }) {
 
                     try {
                         if (msg.ephemeral_public_key) {
-                            const keysRes = await axios.get(`http://localhost:8000/keys/${msg.sender_id}`);
+                            const keysRes = await axios.get(`http://localhost:8000/keys/identity/${msg.sender_id}`);
                             await signal.initializeSessionAsReceiver(
                                 user.id, msg.sender_id, msg.ephemeral_public_key, keysRes.data.identity_key, msg.used_opk_id
                             );
@@ -186,7 +186,7 @@ function Chat({ user, onLogout }) {
 
                     try {
                         if (msg.ephemeral_public_key) {
-                            const res = await axios.get(`http://localhost:8000/keys/${msgSenderId}`);
+                            const res = await axios.get(`http://localhost:8000/keys/identity/${msg.sender_id}`);
                             await signal.initializeSessionAsReceiver(user.id, msgSenderId, msg.ephemeral_public_key, res.data.identity_key, msg.used_opk_id);
                         }
 

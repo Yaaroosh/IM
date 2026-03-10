@@ -74,3 +74,14 @@ def get_user_bundle(user_id: int, db: Session = Depends(get_db)):
         },
         "onetime_prekey": opk_response
     }
+
+@router.get("/identity/{user_id}")
+def get_user_identity(user_id: int, db: Session = Depends(get_db)):
+    ik = db.query(models.IdentityKey).filter(models.IdentityKey.user_id == user_id).first()
+    
+    if not ik:
+        raise HTTPException(status_code=404, detail="Identity key not found")
+        
+    return {
+        "identity_key": ik.public_key
+    }

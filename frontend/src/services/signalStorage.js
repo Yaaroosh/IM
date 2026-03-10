@@ -34,7 +34,7 @@ export function removeUsedOPK(userId, usedKeyId) {
         if (!keysBundle || !keysBundle.opks) return;
 
         const originalLength = keysBundle.opks.length;
-        keysBundle.opks = keysBundle.opks.filter(k => k.key_id !== usedKeyId);
+        keysBundle.opks = keysBundle.opks.filter(k => String(k.key_id) !== String(usedKeyId));
 
         if (keysBundle.opks.length < originalLength) {
             saveMyKeys(userId, keysBundle);
