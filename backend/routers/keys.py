@@ -8,6 +8,8 @@ router = APIRouter(prefix="/keys", tags=["Signal Keys"])
 
 @router.post("/upload/{user_id}")
 def upload_keys(user_id: int, bundle: schemas_keys.BundleUploadRequest, db: Session = Depends(get_db)):
+    db.query(models.IdentityKey).filter(models.IdentityKey.user_id == user_id).delete()
+    db.query(models.SignedPreKey).filter(models.SignedPreKey.user_id == user_id).delete()
     # 1. Save Identity Key
     new_ik = models.IdentityKey(
         user_id=user_id, 
@@ -71,4 +73,16 @@ def get_user_bundle(user_id: int, db: Session = Depends(get_db)):
             "signature": spk.signature
         },
         "onetime_prekey": opk_response
+    }
+
+# Fetches only the public Identity Key of a specific user
+@router.get("/identity/{user_id}")
+def get_user_identity(user_id: int, db: Session = Depends(get_db)):
+    ik = db.query(models.IdentityKey).filter(models.IdentityKey.user_id == user_id).first()
+    
+    if not ik:
+        raise HTTPException(status_code=404, detail="Identity key not found")
+        
+    return {
+        "identity_key": ik.public_key
     }
