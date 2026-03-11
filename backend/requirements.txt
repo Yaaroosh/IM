@@ -4,5 +4,6 @@ sqlalchemy
 pydantic
 databases
 python-multipart
-passlib[bcrypt]
 websockets
+passlib
+bcrypt==3.2.2

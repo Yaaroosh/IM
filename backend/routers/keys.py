@@ -75,6 +75,7 @@ def get_user_bundle(user_id: int, db: Session = Depends(get_db)):
         "onetime_prekey": opk_response
     }
 
+# Fetches only the public Identity Key of a specific user
 @router.get("/identity/{user_id}")
 def get_user_identity(user_id: int, db: Session = Depends(get_db)):
     ik = db.query(models.IdentityKey).filter(models.IdentityKey.user_id == user_id).first()

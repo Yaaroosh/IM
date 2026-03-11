@@ -3,12 +3,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from database import engine, Base
 from routers import auth, chat, websocket, keys
 
-# יצירת הטבלאות
+# Initialize database tables
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
 
-# CORS
+# Configure CORS to allow cross-origin requests from the frontend client
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173"], 
@@ -17,7 +17,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# חיבור הראוטרים
+# Route handlers for different application features
 app.include_router(auth.router)
 app.include_router(chat.router)
 app.include_router(websocket.router)

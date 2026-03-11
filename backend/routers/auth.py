@@ -2,8 +2,17 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from database import get_db
 import models, schemas
+from passlib.context import CryptContext
 
 router = APIRouter()
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+def get_password_hash(password):
+    return pwd_context.hash(password)
+
+def verify_password(plain_password, hashed_password):
+    return pwd_context.verify(plain_password, hashed_password)
 
 @router.post("/register", response_model=schemas.UserPublic)
 def register(user: schemas.UserCreate, db: Session = Depends(get_db)):
@@ -11,7 +20,8 @@ def register(user: schemas.UserCreate, db: Session = Depends(get_db)):
     if existing_user:
         raise HTTPException(status_code=400, detail="Username already taken")
     
-    new_user = models.User(username=user.username, password=user.password)
+    hashed_password = get_password_hash(user.password)
+    new_user = models.User(username=user.username, password=hashed_password)
     
     db.add(new_user)
     db.commit()
@@ -26,7 +36,7 @@ def login(user_credentials: schemas.UserCreate, db: Session = Depends(get_db)):
     if not user:
         raise HTTPException(status_code=403, detail="Invalid Credentials")
     
-    if user.password != user_credentials.password:
+    if not verify_password(user_credentials.password, user.password):
         raise HTTPException(status_code=403, detail="Invalid Credentials")
     
     return user

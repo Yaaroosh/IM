@@ -31,6 +31,7 @@ function Chat({ user, onLogout }) {
         activeChatRef.current = activeChat;
     }, [activeChat]);
 
+    // Fetches the active user list and calculates unread message counts
     const fetchUsers = async () => {
         try {
             const res = await axios.get(`http://localhost:8000/users?current_user_id=${user.id}`);
@@ -48,6 +49,7 @@ function Chat({ user, onLogout }) {
         }
     };
 
+    // Fetches and decrypts pending offline messages to ensure continuous ratchet synchronization
     const syncOfflineMessages = async (currentUsers) => {
         if (isSyncingRef.current) return;
         isSyncingRef.current = true;
@@ -57,12 +59,10 @@ function Chat({ user, onLogout }) {
             
             for (const contact of usersWithMessages) {
                 const res = await axios.get(`http://localhost:8000/messages/${contact.id}?current_user_id=${user.id}`);
-                // מיון חובה כדי לשמור על סדר הראצ'ט
                 const sortedMessages = res.data.sort((a, b) => a.id - b.id);
                 let decryptedBatch = [];
 
                 for (const msg of sortedMessages) {
-                    // הגנה 1: האם ההודעה כבר קיימת (לפי ID או לפי ה-Temp ID שניתן לה כששלחנו)
                     const historyInStorage = storage.getLocalHistory(user.id, contact.id);
                     const alreadyExists = historyInStorage.some(m => 
                         (m.id && String(m.id) === String(msg.id)) || 
@@ -71,7 +71,6 @@ function Chat({ user, onLogout }) {
 
                     if (alreadyExists) continue;
 
-                    // הגנה 2: לעולם לא מנסים לפענח הודעות שאנחנו שלחנו
                     if (String(msg.sender_id) === String(user.id)) {
                         continue;
                     }
@@ -84,17 +83,15 @@ function Chat({ user, onLogout }) {
                             );
                         }
 
-                        // העברת ה-ID הקריטי כדי שהמנעול של הפרוטוקול יעבוד
                         const decrypted = await signal.decryptReceivedMessage(user.id, msg.sender_id, msg.ciphertext, msg.nonce, msg.id);
                         const messageObj = { ...msg, content: decrypted };
                         
                         storage.saveLocalMessage(user.id, contact.id, messageObj);
                         decryptedBatch.push(messageObj);
 
-                        await new Promise(r => setTimeout(r, 100)); // סנכרון כתיבה
+                        await new Promise(r => setTimeout(r, 100)); 
                         
                     } catch (decErr) {
-                        // הגנה 3: תפיסת השגיאה היזומה מהמנעול בזיכרון
                         if (decErr.message === "ALREADY_DECRYPTED") {
                             console.log(`[UI SYNC] Message ${msg.id} was blocked by ratchet lock, fetching from DB...`);
                             const currentHistory = storage.getLocalHistory(user.id, contact.id);
@@ -108,7 +105,6 @@ function Chat({ user, onLogout }) {
                     }
                 }
 
-                // עדכון המסך רק אם המשתמש כרגע בחלון השיחה
                 if (decryptedBatch.length > 0 && activeChatRef.current && String(contact.id) === String(activeChatRef.current.id)) {
                     setMessages(prev => {
                         const existingIds = new Set(prev.map(m => m.id));
@@ -122,10 +118,10 @@ function Chat({ user, onLogout }) {
         }
     };
 
+    // Loads local history, clears unread counts, and triggers server synchronization for the selected chat
     const selectUser = async (otherUser) => {
         setActiveChat(otherUser);
         
-        // טעינה מיידית ממה שכבר שמור מקומית (סינכרוני)
         const historyFromDisk = storage.getLocalHistory(user.id, otherUser.id);
         setMessages(historyFromDisk);
 
@@ -138,10 +134,8 @@ function Chat({ user, onLogout }) {
         try {
             await axios.post(`http://localhost:8000/messages/read/${otherUser.id}?current_user_id=${user.id}`);
             
-            // משיכת הודעות מהשרת
             const res = await axios.get(`http://localhost:8000/messages/${otherUser.id}?current_user_id=${user.id}`);
             
-            // סינון מול הדיסק כדי למנוע סנכרון מיותר - כולל זיהוי לפי temp_id
             const trulyNew = res.data.filter(serverMsg => {
                 const latestStorage = storage.getLocalHistory(user.id, otherUser.id);
                 return !latestStorage.some(localMsg => 
@@ -159,6 +153,7 @@ function Chat({ user, onLogout }) {
         }
     };
 
+    // Initializes user fetching, offline synchronization, and establishes the WebSocket connection
     useEffect(() => {
         const init = async () => {
             try {
@@ -172,12 +167,10 @@ function Chat({ user, onLogout }) {
                     const msg = JSON.parse(event.data);
                     const msgSenderId = Number(msg.sender_id);
                     
-                    // לא מטפלים בהודעות של עצמנו מהשרת
                     if (msgSenderId === Number(user.id)) return; 
 
                     const history = storage.getLocalHistory(user.id, msgSenderId);
                     
-                    // הגנה עם temp_id גם ב-WebSocket
                     const alreadyExists = history.some(m => 
                         (m.id && String(m.id) === String(msg.id)) || 
                         (m.temp_id && msg.temp_id && String(m.temp_id) === String(msg.temp_id))
@@ -190,7 +183,6 @@ function Chat({ user, onLogout }) {
                             await signal.initializeSessionAsReceiver(user.id, msgSenderId, msg.ephemeral_public_key, res.data.identity_key, msg.used_opk_id);
                         }
 
-                        // הוספת ID להגנה הראצ'ט גם ב-WebSocket
                         const decryptedContent = await signal.decryptReceivedMessage(user.id, msgSenderId, msg.ciphertext, msg.nonce, msg.id);
                         const messageObj = { ...msg, content: decryptedContent, timestamp: new Date().toISOString() };
 
@@ -205,7 +197,7 @@ function Chat({ user, onLogout }) {
                         }
                     } catch (err) {
                         if (err.message === "ALREADY_DECRYPTED") {
-                            // התעלם - ההודעה כבר מטופלת
+                            // IGMORE
                         } else {
                             console.error("WS Decryption error:", err);
                         }
@@ -228,6 +220,7 @@ function Chat({ user, onLogout }) {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }, [messages]);
 
+    // Encrypts and transmits a new message via WebSocket while saving it to local storage
     const sendMessage = async () => {
         if (!newMessage.trim() || !activeChat) return;
         if (socketRef.current?.readyState !== WebSocket.OPEN) return;

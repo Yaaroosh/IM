@@ -12,15 +12,15 @@ export async function registerUser(userId) {
     try {
         console.log(`Generating keys for user: ${userId}`);
 
-        // 1. Generate all key pairs
+        // Generate all key pairs
         const ik = crypto.generateKeyPair();
         const spk = crypto.generateKeyPair();
         const opks = crypto.generateOneTimePreKeys(50);
         
-        // 2. Sign the SPK with the IK
+        // Sign the SPK with the IK
         const signature = crypto.signPreKey(spk.publicKey, ik.secretKey);
 
-        // 3. Save private keys to local storage
+        // Save private keys to local storage
         const myPrivateKeys = {
             ik: ik.secretKey,
             spk: spk.secretKey,
@@ -31,7 +31,7 @@ export async function registerUser(userId) {
         };
         storage.saveMyKeys(userId, myPrivateKeys);
 
-        // 4. Prepare the public bundle exactly as keys.py expects for POST
+        // Prepare the public bundle exactly as keys.py expects for POST
         const publicBundle = {
             identity_key: ik.publicKey,
             signed_prekey: {
@@ -46,7 +46,7 @@ export async function registerUser(userId) {
             }))
         };
 
-        // 5. Upload to server
+        // Upload to server
         await axios.post(`${API_BASE_URL}/keys/upload/${userId}`, publicBundle);
         console.log("Registration complete! Public keys uploaded.");
         return true;
@@ -64,18 +64,18 @@ export async function startSessionWithContact(myUserId, contactId) {
     try {
         console.log(`Starting X3DH handshake with ${contactId}`);
 
-        // 1. Retrieve my local private keys
+        // Retrieve my local private keys
         const myKeys = storage.getMyKeys(myUserId);
         if (!myKeys) throw new Error("No local keys found. Register first.");
 
-        // 2. Fetch contact's public bundle from the server
+        // Fetch contact's public bundle from the server
         const response = await axios.get(`${API_BASE_URL}/keys/${contactId}`);
         const contactBundle = response.data;
 
-        // 3. Generate an Ephemeral Key for this session
+        // Generate an Ephemeral Key for this session
         const myEphemeralKey = crypto.generateKeyPair(); 
 
-        // 4. Calculate Diffie-Hellman shared secrets
+        // Calculate Diffie-Hellman shared secrets
         const dh1 = crypto.computeDH(myKeys.ik, contactBundle.signed_prekey.public_key);
         const dh2 = crypto.computeDH(myEphemeralKey.secretKey, contactBundle.identity_key);
         const dh3 = crypto.computeDH(myEphemeralKey.secretKey, contactBundle.signed_prekey.public_key);
@@ -87,7 +87,7 @@ export async function startSessionWithContact(myUserId, contactId) {
         let dh4 = "";
         let usedOpkId = null;
         
-        // 5. Fetch One-Time PreKey (adapted to keys.py which returns a single object!)
+        // Fetch One-Time PreKey
         if (contactBundle.onetime_prekey) {
             const contactOpk = contactBundle.onetime_prekey; 
             dh4 = crypto.computeDH(myEphemeralKey.secretKey, contactOpk.public_key);
@@ -96,15 +96,14 @@ export async function startSessionWithContact(myUserId, contactId) {
 
         console.log("%c[SENDER DEBUG] DH4:", "color: #3b82f6", dh4 || "EMPTY/NULL");
 
-        // 6. Derive the initial Chain Key
+        // Derive the initial Chain Key
         const initialChainKey = crypto.deriveInitialChainKey(dh1, dh2, dh3, dh4);
 
-        // 7. Save the session state (Chain Key) in local storage
+        // Save the session state (Chain Key) in local storage
         storage.saveSessionState(myUserId, contactId, initialChainKey);
         
         console.log(`X3DH complete! Chain Key established with ${contactId}`);
 
-        // שורת בדיקה קריטית!!!
         console.log("%c[SENDER] Initial Chain Key:", "color: orange", initialChainKey);
         
         return {
@@ -118,16 +117,16 @@ export async function startSessionWithContact(myUserId, contactId) {
     }
 }
 
-// Receiver side: Initialize session from the first incoming message (X3DH)
+// Receiver side: Completes the X3DH key exchange using the sender's ephemeral key and optional OPK ID attached to the first message
 export async function initializeSessionAsReceiver(myUserId, contactId, theirEphemeralKey, theirIdentityKey, theirOpkId = null) {
     try {
         console.log(`Initializing incoming session from contact: ${contactId}`);
 
-        // 1. Retrieve my local private keys
+        // Retrieve my local private keys
         const myKeys = storage.getMyKeys(myUserId);
         if (!myKeys) throw new Error("Local keys missing. Please register first.");
 
-        // 2. Calculate the 4 DH shared secrets from the receiver's perspective
+        // Calculate the 4 DH shared secrets from the receiver's perspective
         const dh1 = crypto.computeDH(myKeys.spk, theirIdentityKey);
         const dh2 = crypto.computeDH(myKeys.ik, theirEphemeralKey);
         const dh3 = crypto.computeDH(myKeys.spk, theirEphemeralKey);
@@ -144,15 +143,14 @@ export async function initializeSessionAsReceiver(myUserId, contactId, theirEphe
             if (myOpk) {
                 dh4 = crypto.computeDH(myOpk.secretKey, theirEphemeralKey);
             } else {
-                // אם השולח השתמש במפתח, אבל אנחנו לא מוצאים אותו אצלנו - חייבים לעצור!
                 throw new Error("Missing required OPK for decryption.");
             }
         }
 
-        // 3. Derive the exact same initial Chain Key
+        // Derive the exact same initial Chain Key
         const initialChainKey = crypto.deriveInitialChainKey(dh1, dh2, dh3, dh4);
 
-        // 4. Save the established session state
+        // Save the established session state
         storage.saveSessionState(myUserId, contactId, initialChainKey);
         
         if (theirOpkId !== null && theirOpkId !== undefined) {
@@ -161,7 +159,6 @@ export async function initializeSessionAsReceiver(myUserId, contactId, theirEphe
         
         console.log(`Session with ${contactId} successfully established as receiver.`);
 
-        // שורת בדיקה קריטית!!!
         console.log("%c[RECEIVER] Initial Chain Key:", "color: orange", initialChainKey);
 
         return initialChainKey;
@@ -184,7 +181,7 @@ export async function encryptOutgoingMessage(myUserId, contactId, plaintext) {
             throw new Error(`No active session with ${contactId}.`);
         }
 
-        // שלב הראצ'ט
+        // Advances the symmetric ratchet to derive a new message key
         const derived = crypto.deriveNextKeys(currentChainKey);
         console.log("Derived keys:", derived); 
 
@@ -192,17 +189,15 @@ export async function encryptOutgoingMessage(myUserId, contactId, plaintext) {
             throw new Error("Failed to derive Message Key");
         }
 
-        // שורת בדיקה קריטית!!!
         console.log(`%c[SENDER] Message Key: ${derived.messageKey}`, "color: blue; font-weight: bold");
 
-        // שלב ההצפנה
+        // encrypts the plaintext
         const encryptedData = crypto.encryptMessage(plaintext, derived.messageKey);
         console.log("Encrypted payload:", encryptedData);
 
-        // שורת בדיקה קריטית!!!
         console.log(`%c[SENDER] Nonce: ${encryptedData.nonce}`, "color: blue");
 
-        // עדכון ה-Storage
+        // update the chain key in the local Storage 
         storage.saveSessionState(myUserId, contactId, derived.nextChainKey);
 
         return {
@@ -211,7 +206,6 @@ export async function encryptOutgoingMessage(myUserId, contactId, plaintext) {
         };
 
     } catch (error) {
-        // כאן נראה את השגיאה המפורטת ב-Console
         console.error("Critical Failure in encryptOutgoingMessage:", error);
         throw error;
     }
@@ -223,10 +217,8 @@ const decryptedCache = new Set();
 // 4. Decrypt Received Message
 // ==========================================
 export async function decryptReceivedMessage(myUserId, contactId, ciphertext, nonce, msgId) {
-    // מנעול זיכרון: אם ה-ID הזה כבר עבר פה בסשן הנוכחי, עוצרים מיד!
     if (msgId && decryptedCache.has(msgId)) {
         console.warn(`%c[BLOCKER] Message ${msgId} already decrypted! Stopping double ratchet.`, "color: #fbbf24; font-weight: bold;");
-        // זורקים שגיאה ייעודית שתיתפס ב-Chat.jsx בלי להרוס את הראצ'ט
         throw new Error("ALREADY_DECRYPTED"); 
     }
 
@@ -237,19 +229,18 @@ export async function decryptReceivedMessage(myUserId, contactId, ciphertext, no
             throw new Error(`No active session`);
         }
 
-        // קידום הראצ'ט 
+        // Advance the ratchet to generate the message key and the next chain key
         const { messageKey, nextChainKey } = crypto.deriveNextKeys(currentChainKey);
 
         console.log(`%c[RECEIVER] Message Key: ${messageKey}`, "color: green; font-weight: bold");
         console.log(`%c[RECEIVER] Nonce from msg: ${nonce}`, "color: green");
 
-        // עדכון ה-Storage במפתח החדש
+        // Update the local storage with the new chain key
         storage.saveSessionState(myUserId, contactId, nextChainKey);
 
-        // מוסיפים את ההודעה ל"רשימה השחורה" כדי שלא תפוענח שוב
         if (msgId) decryptedCache.add(msgId);
 
-        // פענוח בפועל
+        // Perform the decryption
         const plaintext = crypto.decryptMessage(ciphertext, nonce, messageKey);
 
         return plaintext;

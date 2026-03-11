@@ -6,15 +6,18 @@ from models import Message
 
 router = APIRouter(tags=["WebSocket"])
 
+# Manages active WebSocket connections for real-time messaging
 class ConnectionManager:
+    # Initializes an empty dictionary to store active user connections
     def __init__(self):
-        # Maps user_id to their active WebSocket connection
         self.active_connections: Dict[int, WebSocket] = {}
 
+    # Accepts a new WebSocket connection and maps it to the user's ID
     async def connect(self, websocket: WebSocket, user_id: int):
         await websocket.accept()
         self.active_connections[user_id] = websocket
 
+    # Removes a user's WebSocket connection from the active pool
     def disconnect(self, user_id: int):
         if user_id in self.active_connections:
             del self.active_connections[user_id]
@@ -24,17 +27,17 @@ class ConnectionManager:
             try:
                 await self.active_connections[user_id].send_json(message)
             except RuntimeError:
-                # Handle cases where the connection dropped unexpectedly
                 self.disconnect(user_id)
 
 manager = ConnectionManager()
 
+# Handles real-time message routing, database storage, and delivery of encrypted payloads
 @router.websocket("/ws/{user_id}")
 async def websocket_endpoint(websocket: WebSocket, user_id: int, db: Session = Depends(get_db)):
     await manager.connect(websocket, user_id)
     try:
         while True:
-            # 1. Receive incoming data
+            # Receive incoming data
             data = await websocket.receive_json()
             
             recipient_id = data.get("recipient_id")
@@ -45,7 +48,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: int, db: Session = D
             used_opk_id = data.get("used_opk_id")
 
             if recipient_id and ciphertext and nonce:
-                # 2. Save to Database 
+                # Save to Database 
                 message = Message(
                     sender_id=user_id, 
                     recipient_id=recipient_id, 
@@ -58,7 +61,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: int, db: Session = D
                 db.commit()
                 db.refresh(message)
 
-                # 3. Construct response payload
+                # Construct response payload
                 response = {
                     "id": message.id,
                     "sender_id": user_id,
@@ -71,11 +74,9 @@ async def websocket_endpoint(websocket: WebSocket, user_id: int, db: Session = D
                     "temp_id": temp_id 
                 }
 
-                # 4. Send to recipient
+                # Send to recipient
                 await manager.send_personal_json(response, recipient_id)
                 
-                # 5. Echo back to sender (critical for frontend deduplication)
-                #await manager.send_personal_json(response, user_id)
 
     except WebSocketDisconnect:
         manager.disconnect(user_id)

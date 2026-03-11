@@ -2,7 +2,7 @@ const MY_KEYS_PREFIX = 'signal_keys_';
 const SESSION_PREFIX = 'signal_session_';
 
 
-// Saves the user's private keys bundle (IK, SPK, OPKs)
+// Saves the user's private keys bundle (IK, SPK, OPKs) in Local Storage
 export function saveMyKeys(userId, keys) {
     try {
         const serialized = JSON.stringify(keys);
@@ -66,26 +66,12 @@ export function getSessionState(myUserId, contactId) {
     }
 }
 
-// Clears all Signal-related data from local storage on logout
-export function clearAllStorage() {
-    try {
-        Object.keys(localStorage).forEach(key => {
-            if (key.startsWith(MY_KEYS_PREFIX) || key.startsWith(SESSION_PREFIX)) {
-                localStorage.removeItem(key);
-            }
-        });
-        console.log("All Signal storage cleared successfully.");
-    } catch (error) {
-        console.error("Error clearing Signal storage:", error);
-    }
-}
 
-// שמירת הודעה מפוענחת להיסטוריה המקומית
+// Appends a decrypted message to the local chat history
 export function saveLocalMessage(currentUserId, contactId, message) {
     const key = `history_${currentUserId}_to_${contactId}`;
     const history = JSON.parse(localStorage.getItem(key) || "[]");
     
-    // מניעת כפילויות לפני שמירה
     const exists = history.some(m => {
         const isSameTemp = m.temp_id && message.temp_id && m.temp_id === message.temp_id;
         const isSameId = m.id && message.id && m.id === message.id;
@@ -97,7 +83,7 @@ export function saveLocalMessage(currentUserId, contactId, message) {
     }
 }
 
-// שליפת היסטוריה מקומית
+// Retrieves the decrypted message history for a specific conversation
 export function getLocalHistory(currentUserId, contactId) {
     const key = `history_${currentUserId}_to_${contactId}`;
     return JSON.parse(localStorage.getItem(key) || "[]");

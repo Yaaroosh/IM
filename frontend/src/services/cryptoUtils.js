@@ -5,7 +5,7 @@ import { sha512 } from 'js-sha512';
 const toBase64 = util.encodeBase64;
 const fromBase64 = util.decodeBase64;
 
-// Generate Key
+// Generate Key pair using Curve25519
 export function generateKeyPair() {
     const keyPair = nacl.box.keyPair();
     return {
@@ -37,31 +37,26 @@ export function generateOneTimePreKeys(count) {
     return opks;
 }
 
-// Perform Diffie-Hellman to get a shared secret
+// Performs an Elliptic-Curve Diffie-Hellman (ECDH) to get a shared secret
 export function computeDH(myPrivateKeyBase64, theirPublicKeyBase64) {
     try {
-        // בדיקת תקינות - מוודא שהפרמטרים הם אכן מחרוזות ולא undefined
         if (!myPrivateKeyBase64 || !theirPublicKeyBase64) {
             throw new Error(`Missing keys: myPriv=${!!myPrivateKeyBase64}, theirPub=${!!theirPublicKeyBase64}`);
         }
 
-        // המרה מ-Base64 ל-Uint8Array
         const myPriv = util.decodeBase64(myPrivateKeyBase64);
         const theirPub = util.decodeBase64(theirPublicKeyBase64);
 
-        // בדיקה שהפענוח הצליח והחזיר מערך באורך המתאים (32 בתים ל-Curve25519)
         if (myPriv.length !== 32 || theirPub.length !== 32) {
              throw new Error("Invalid key length after decoding");
         }
 
         const sharedSecret = nacl.scalarMult(myPriv, theirPub);
         
-        // החזרת הסוד כ-Base64 (כדי שיהיה קל לשרשר אותו ל-KDF אחר כך)
         return util.encodeBase64(sharedSecret);
         
     } catch (error) {
         console.error("Critical error in computeDH:", error.message);
-        // זריקת השגיאה הלאה כדי שנדע ב-Chat.jsx שההצפנה נכשלה
         throw error; 
     }
 }
