@@ -1,26 +1,36 @@
-python -m venv venv
+# How to Run the IM App (Signal Protocol E2EE)
 
-venv\Scripts\Activate
-^^^ if doesnt work run: Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-    and then run it again
+## 1. Backend Setup (FastAPI)
+Open a terminal and run the following commands:
 
 cd backend
-pip install -r requirements.txt
-uvicorn main:app --reload (make sure ur on (venv) before running it)
 
-cd ..
+# Create a virtual environment
+python -m venv venv
+
+# Activate the virtual environment
+# For Windows:
+venv\Scripts\Activate
+# (If you get an error, run: Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser, then try again)
+# For Mac/Linux:
+# source venv/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Run the server (must be inside the activated venv)
+uvicorn main:app --reload
+# The backend will run on http://localhost:8000
+
+
+## 2. Frontend Setup (React)
+Open a SECOND, separate terminal and run:
+
 cd frontend
 
-REQUIRED Node.js version 20.19+ or 22.12+
-    check version with node -v
-    upgrade if necessary, from website
-    Reinstall deps (important after major Node change)
-        Remove-Item -Recurse -Force node_modules
-        Remove-Item package-lock.json
-        node -v (to make sure the update worked)
-
+# Prerequisites: Ensure you have Node.js installed (v20+)
+# Install all required packages (React, Tailwind, Lucide, Axios, etc.)
 npm install
-npm install -D tailwindcss@3 postcss autoprefixer(like css)
-npx tailwindcss init -p
-npm install lucide-react
+
+# Start the development server
 npm run dev
