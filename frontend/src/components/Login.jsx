@@ -39,7 +39,6 @@ function Login({ onLogin }) {
       
       {/* צד שמאל - ויזואלי ) */}
       <div className="hidden lg:flex flex-1 bg-gradient-to-br from-blue-900 to-slate-900 items-center justify-center relative overflow-hidden">
-        <div className="absolute top-0 left-0 w-full h-full bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20"></div>
         <div className="relative z-10 text-center px-10">
             <div className="w-24 h-24 bg-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-8 shadow-2xl shadow-blue-500/30 rotate-3 transform hover:rotate-6 transition duration-500">
                 <MessageSquare size={48} className="text-white" />
