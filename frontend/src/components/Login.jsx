@@ -1,6 +1,7 @@
 import { useState } from "react";
 import axios from "axios";
 import { User, Lock, ArrowRight, MessageSquare, Loader2 } from "lucide-react";
+import { registerUser } from "../services/signalProtocol";
 
 function Login({ onLogin }) {
   const [isRegistering, setIsRegistering] = useState(false);
@@ -9,6 +10,7 @@ function Login({ onLogin }) {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
+  // Handles user authentication, including API requests and Signal key generation for new accounts
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
@@ -21,6 +23,9 @@ function Login({ onLogin }) {
         username,
         password,
       });
+      if (isRegistering){
+        await registerUser(res.data.id);
+      }
       onLogin(res.data);
     } catch (err) {
       setError(err.response?.data?.detail || "Something went wrong. Please try again.");
@@ -32,9 +37,8 @@ function Login({ onLogin }) {
   return (
     <div className="min-h-screen w-full flex bg-[#0f172a] text-slate-200 font-sans">
       
-      {/* צד שמאל - ויזואלי (מוסתר במובייל) */}
+      {/* צד שמאל - ויזואלי ) */}
       <div className="hidden lg:flex flex-1 bg-gradient-to-br from-blue-900 to-slate-900 items-center justify-center relative overflow-hidden">
-        <div className="absolute top-0 left-0 w-full h-full bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20"></div>
         <div className="relative z-10 text-center px-10">
             <img src="/logo2.png" className="w-64 mx-auto mb-6" />
             <h1 className="text-5xl font-bold text-white mb-6 leading-tight">Chatty<br/>for chatty people.</h1>

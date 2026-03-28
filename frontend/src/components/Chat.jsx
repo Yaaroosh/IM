@@ -1,270 +1,331 @@
 import { useState, useEffect, useRef } from "react";
 import axios from "axios";
 import { MessageSquare, Phone, Video, MoreVertical, LogOut } from "lucide-react";
+import * as signal from "../services/signalProtocol";
+import * as storage from "../services/signalStorage";
 
-// פונקציה לבחירת צבע רקע לפי שם המשתמש
 const getAvatarColor = (name) => {
-  const colors = ["bg-blue-500", "bg-purple-500", "bg-pink-500", "bg-indigo-500", "bg-teal-500", "bg-orange-500"];
-  let hash = 0;
-  for (let i = 0; i < name.length; i++) {
-    hash = name.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  return colors[Math.abs(hash) % colors.length];
+    const colors = ["bg-blue-500", "bg-purple-500", "bg-pink-500", "bg-indigo-500", "bg-teal-500", "bg-orange-500"];
+    let hash = 0;
+    for (let i = 0; i < name.length; i++) {
+        hash = name.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    return colors[Math.abs(hash) % colors.length];
 };
 
 function Chat({ user, onLogout }) {
-  const [users, setUsers] = useState([]);
-  const [activeChat, setActiveChat] = useState(null);
-  const [messages, setMessages] = useState([]);
-  const [newMessage, setNewMessage] = useState("");
-  const [unreadCounts, setUnreadCounts] = useState({}); 
-  
-  const socketRef = useRef(null);
-  const messagesEndRef = useRef(null);
+    const [users, setUsers] = useState([]);
+    const [activeChat, setActiveChat] = useState(null);
+    const [messages, setMessages] = useState([]);
+    const [newMessage, setNewMessage] = useState("");
+    const [unreadCounts, setUnreadCounts] = useState({});
 
-  // 1. פונקציה שמושכת את רשימת המשתמשים מהשרת
-  const fetchUsers = async () => {
-    try {
-      const res = await axios.get(`http://localhost:8000/users?current_user_id=${user.id}`);
-      setUsers(res.data);
+    const socketRef = useRef(null);
+    const messagesEndRef = useRef(null);
+    const activeChatRef = useRef(null);
+    
+    // מנעול למניעת כפל סנכרון במקביל
+    const isSyncingRef = useRef(false);
 
-      // --- מונים של הודעות שלא נקראו מהשרת ---
-      const counts = {};
-      res.data.forEach(u => {
-        if (u.unread_count > 0) {
-            counts[u.id] = u.unread_count;
+    useEffect(() => {
+        activeChatRef.current = activeChat;
+    }, [activeChat]);
+
+    // Fetches the active user list and calculates unread message counts
+    const fetchUsers = async () => {
+        try {
+            const res = await axios.get(`http://localhost:8000/users?current_user_id=${user.id}`);
+            setUsers(res.data);
+            const counts = {};
+            res.data.forEach(u => {
+                if (activeChatRef.current && u.id === activeChatRef.current.id) return;
+                if (u.unread_count > 0) counts[u.id] = u.unread_count;
+            });
+            setUnreadCounts(counts);
+            return res.data;
+        } catch (err) {
+            console.error("Error fetching users:", err);
+            return [];
         }
-      });
-      setUnreadCounts(counts); // סנכרון המצב עם מה ששמור בשרת
-      // ------------------------------------------------
-
-    } catch (err) {
-      console.error("Error fetching users:", err);
-    }
-  };
-
- // 2. חיבור ל-WebSocket + רענון אוטומטי של הרשימה
-  useEffect(() => {
-    fetchUsers(); // טעינה ראשונה כשנכנסים
-
-    // א. חיבור ל-WebSocket
-    const socket = new WebSocket(`ws://localhost:8000/ws/${user.id}`);
-    
-    socket.onmessage = (event) => {
-      const msg = JSON.parse(event.data);
-      fetchUsers(); // רענון כשיש הודעה חדשה
-      handleIncomingMessage(msg);
     };
 
-    socketRef.current = socket;
+    // Fetches and decrypts pending offline messages to ensure continuous ratchet synchronization
+    const syncOfflineMessages = async (currentUsers) => {
+        if (isSyncingRef.current) return;
+        isSyncingRef.current = true;
 
-    // ב. מנגנון דגימה (Polling) - מרענן את רשימת המשתמשים כל 3 שניות
-    const intervalId = setInterval(() => {
-        fetchUsers();
-    }, 3000);
+        try {
+            const usersWithMessages = currentUsers.filter(u => u.unread_count > 0);
+            
+            for (const contact of usersWithMessages) {
+                const res = await axios.get(`http://localhost:8000/messages/${contact.id}?current_user_id=${user.id}`);
+                const sortedMessages = res.data.sort((a, b) => a.id - b.id);
+                let decryptedBatch = [];
 
-    // ניקוי ביציאה (סגירת סוקט וביטול הטיימר)
-    return () => {
-      socket.close();
-      clearInterval(intervalId);
+                for (const msg of sortedMessages) {
+                    const historyInStorage = storage.getLocalHistory(user.id, contact.id);
+                    const alreadyExists = historyInStorage.some(m => 
+                        (m.id && String(m.id) === String(msg.id)) || 
+                        (m.temp_id && msg.temp_id && String(m.temp_id) === String(msg.temp_id))
+                    );
+
+                    if (alreadyExists) continue;
+
+                    if (String(msg.sender_id) === String(user.id)) {
+                        continue;
+                    }
+
+                    try {
+                        if (msg.ephemeral_public_key) {
+                            const keysRes = await axios.get(`http://localhost:8000/keys/identity/${msg.sender_id}`);
+                            await signal.initializeSessionAsReceiver(
+                                user.id, msg.sender_id, msg.ephemeral_public_key, keysRes.data.identity_key, msg.used_opk_id
+                            );
+                        }
+
+                        const decrypted = await signal.decryptReceivedMessage(user.id, msg.sender_id, msg.ciphertext, msg.nonce, msg.id);
+                        const messageObj = { ...msg, content: decrypted };
+                        
+                        storage.saveLocalMessage(user.id, contact.id, messageObj);
+                        decryptedBatch.push(messageObj);
+
+                        await new Promise(r => setTimeout(r, 100)); 
+                        
+                    } catch (decErr) {
+                        if (decErr.message === "ALREADY_DECRYPTED") {
+                            console.log(`[UI SYNC] Message ${msg.id} was blocked by ratchet lock, fetching from DB...`);
+                            const currentHistory = storage.getLocalHistory(user.id, contact.id);
+                            const existingMsg = currentHistory.find(m => String(m.id) === String(msg.id));
+                            if (existingMsg) {
+                                decryptedBatch.push(existingMsg);
+                            }
+                        } else {
+                            console.error(`Decryption failed for msg ${msg.id}:`, decErr);
+                        }
+                    }
+                }
+
+                if (decryptedBatch.length > 0 && activeChatRef.current && String(contact.id) === String(activeChatRef.current.id)) {
+                    setMessages(prev => {
+                        const existingIds = new Set(prev.map(m => m.id));
+                        const filtered = decryptedBatch.filter(m => !existingIds.has(m.id));
+                        return [...prev, ...filtered];
+                    });
+                }
+            }
+        } finally {
+            isSyncingRef.current = false;
+        }
     };
-  }, [user.id]);
 
-  const handleIncomingMessage = (msg) => {
-    setActiveChat((currentActive) => {
-        const msgSenderId = Number(msg.sender_id);
-        const currentActiveId = currentActive ? Number(currentActive.id) : null;
-        const myId = Number(user.id);
-
-        // אם אנחנו בשיחה עם השולח - נוסיף את ההודעה למסך
-        if (currentActive && (msgSenderId === currentActiveId || msgSenderId === myId)) {
-            setMessages((prev) => [...prev, msg]);
-        } 
-        // שימי לב: אנחנו לא צריכים יותר לעדכן ידנית את ה-unreadCounts כאן,
-        // כי הפונקציה fetchUsers למעלה עושה את זה בצורה מדויקת יותר מול השרת.
+    // Loads local history, clears unread counts, and triggers server synchronization for the selected chat
+    const selectUser = async (otherUser) => {
+        setActiveChat(otherUser);
         
-        return currentActive;
-    });
-  };
+        const historyFromDisk = storage.getLocalHistory(user.id, otherUser.id);
+        setMessages(historyFromDisk);
 
-  // גלילה אוטומטית למטה כשיש הודעה חדשה
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+        setUnreadCounts(prev => {
+            const n = { ...prev };
+            delete n[otherUser.id];
+            return n;
+        });
 
-  // בחירת משתמש לשיחה
-  const selectUser = async (otherUser) => {
-    setActiveChat(otherUser);
-    
-    // איפוס ההתראות של המשתמש הזה (גם מקומית וגם בשרת זה יתעדכן כשימשכו ההודעות)
-    setUnreadCounts((prev) => {
-        const newCounts = { ...prev };
-        delete newCounts[otherUser.id];
-        return newCounts;
-    });
+        try {
+            await axios.post(`http://localhost:8000/messages/read/${otherUser.id}?current_user_id=${user.id}`);
+            
+            const res = await axios.get(`http://localhost:8000/messages/${otherUser.id}?current_user_id=${user.id}`);
+            
+            const trulyNew = res.data.filter(serverMsg => {
+                const latestStorage = storage.getLocalHistory(user.id, otherUser.id);
+                return !latestStorage.some(localMsg => 
+                    (localMsg.id && String(localMsg.id) === String(serverMsg.id)) ||
+                    (localMsg.temp_id && serverMsg.temp_id && String(localMsg.temp_id) === String(serverMsg.temp_id))
+                );
+            });
 
-    try {
-      // משיכת הודעות (זה גם יסמן אותן כ"נקראו" בשרת בגלל העדכון שעשינו בבאקנד)
-      const res = await axios.get(`http://localhost:8000/messages/${otherUser.id}?current_user_id=${user.id}`);
-      setMessages(res.data);
-      
-      // רענון נוסף כדי לוודא שהמספרים בשרת התאפסו
-      fetchUsers();
-    } catch (err) {
-      console.error("Failed to fetch messages", err);
-    }
-  };
+            if (trulyNew.length > 0 && !isSyncingRef.current) {
+                console.log(`[DEBUG] Syncing ${trulyNew.length} truly new messages for ${otherUser.username}`);
+                await syncOfflineMessages([{ ...otherUser, unread_count: trulyNew.length }]);
+            }
+        } catch (err) {
+            console.error("Select user sync error:", err);
+        }
+    };
 
-  // שליחת הודעה
-  const sendMessage = () => {
-    if (!newMessage.trim() || !activeChat) return;
-    
-    const payload = { recipient_id: activeChat.id, content: newMessage };
-    
-    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-        socketRef.current.send(JSON.stringify(payload));
-        
-        // הוספה מיידית למסך שלנו
-        setMessages((prev) => [...prev, { 
-            sender_id: user.id, 
-            recipient_id: activeChat.id, 
-            content: newMessage, 
-            timestamp: new Date().toISOString() 
-        }]);
-        setNewMessage("");
-    }
-  };
+    // Initializes user fetching, offline synchronization, and establishes the WebSocket connection
+    useEffect(() => {
+        const init = async () => {
+            try {
+                const currentUsers = await fetchUsers();
+                await syncOfflineMessages(currentUsers);
 
-  return (
-    <div className="flex h-screen bg-[#0f172a] text-slate-200 font-sans overflow-hidden">
-      
-      {/* סרגל צד - רשימת משתמשים */}
-      <div className="w-80 bg-[#1e293b] flex flex-col border-r border-slate-700/50">
-        
-        {/* כותרת הצד */}
-        <div className="p-4 border-b border-slate-700/50 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-                <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-bold ${getAvatarColor(user.username)}`}>
-                    {user.username[0].toUpperCase()}
-                </div>
-                <div>
-                    <h3 className="font-semibold text-white">{user.username}</h3>
-                    <p className="text-xs text-green-400 flex items-center gap-1">Online</p>
-                </div>
-            </div>
-            <button onClick={onLogout} title="Logout" className="p-2 hover:bg-slate-700 rounded-full transition text-slate-400 hover:text-red-400">
-                <LogOut size={18} />
-            </button>
-        </div>
+                const socket = new WebSocket(`ws://localhost:8000/ws/${user.id}`);
+                socketRef.current = socket;
 
-        {/* רשימת המשתמשים */}
-        <div className="flex-1 overflow-y-auto px-2 space-y-1 mt-2">
-            {users.map((u) => (
-                <div 
-                    key={u.id} 
-                    onClick={() => selectUser(u)}
-                    className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-all border border-transparent
-                        ${activeChat?.id === u.id ? "bg-slate-700/60 border-slate-600" : "hover:bg-slate-800"}`}
-                >
-                    <div className="relative">
-                        <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-medium ${getAvatarColor(u.username)}`}>
-                            {u.username[0].toUpperCase()}
-                        </div>
-                        {/* נקודה ירוקה */}
-                        <span className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-[#1e293b] rounded-full"></span>
-                    </div>
+                socket.onmessage = async (event) => {
+                    const msg = JSON.parse(event.data);
+                    const msgSenderId = Number(msg.sender_id);
                     
-                    <div className="flex-1 min-w-0">
-                        <div className="flex justify-between items-center mb-0.5">
-                            <h4 className={`font-medium truncate ${unreadCounts[u.id] ? "text-white font-bold" : "text-slate-200"}`}>
-                                {u.username}
-                            </h4>
-                            
-                            {/* עיגול כחול להודעות חדשות */}
-                            {unreadCounts[u.id] > 0 && (
-                                <span className="bg-blue-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[1.25rem] text-center">
-                                    {unreadCounts[u.id]}
-                                </span>
-                            )}
-                        </div>
-                        <p className={`text-xs truncate ${unreadCounts[u.id] ? "text-blue-300 font-medium" : "text-slate-400"}`}>
-                            {unreadCounts[u.id] ? "New message!" : "Click to chat"}
-                        </p>
-                    </div>
-                </div>
-            ))}
-        </div>
-      </div>
+                    if (msgSenderId === Number(user.id)) return; 
 
-      {/* אזור הצ'אט המרכזי */}
-      <div className="flex-1 flex flex-col bg-[#0f172a] relative">
-        {activeChat ? (
-            <>
-                {/* כותרת הצ'אט */}
-                <div className="h-16 border-b border-slate-700/50 flex items-center justify-between px-6 bg-[#1e293b]/50 backdrop-blur-sm">
+                    const history = storage.getLocalHistory(user.id, msgSenderId);
+                    
+                    const alreadyExists = history.some(m => 
+                        (m.id && String(m.id) === String(msg.id)) || 
+                        (m.temp_id && msg.temp_id && String(m.temp_id) === String(msg.temp_id))
+                    );
+                    if (alreadyExists) return;
+
+                    try {
+                        if (msg.ephemeral_public_key) {
+                            const res = await axios.get(`http://localhost:8000/keys/identity/${msg.sender_id}`);
+                            await signal.initializeSessionAsReceiver(user.id, msgSenderId, msg.ephemeral_public_key, res.data.identity_key, msg.used_opk_id);
+                        }
+
+                        const decryptedContent = await signal.decryptReceivedMessage(user.id, msgSenderId, msg.ciphertext, msg.nonce, msg.id);
+                        const messageObj = { ...msg, content: decryptedContent, timestamp: new Date().toISOString() };
+
+                        storage.saveLocalMessage(user.id, msgSenderId, messageObj);
+
+                        if (activeChatRef.current && msgSenderId === Number(activeChatRef.current.id)) {
+                            axios.post(`http://localhost:8000/messages/read/${msgSenderId}?current_user_id=${user.id}`);
+                            setMessages((prev) => [...prev, messageObj]);
+                        } else {
+                            setUnreadCounts(prev => ({ ...prev, [msgSenderId]: (prev[msgSenderId] || 0) + 1 }));
+                            fetchUsers();
+                        }
+                    } catch (err) {
+                        if (err.message === "ALREADY_DECRYPTED") {
+                            // IGMORE
+                        } else {
+                            console.error("WS Decryption error:", err);
+                        }
+                    }
+                };
+            } catch (err) {
+                console.error("Init failed:", err);
+            }
+        };
+
+        init();
+        const interval = setInterval(fetchUsers, 5000);
+        return () => {
+            if (socketRef.current) socketRef.current.close();
+            clearInterval(interval);
+        };
+    }, [user.id]);
+
+    useEffect(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }, [messages]);
+
+    // Encrypts and transmits a new message via WebSocket while saving it to local storage
+    const sendMessage = async () => {
+        if (!newMessage.trim() || !activeChat) return;
+        if (socketRef.current?.readyState !== WebSocket.OPEN) return;
+
+        try {
+            const tempId = crypto.randomUUID();
+            let handshake = {};
+            
+            if (!storage.getSessionState(user.id, activeChat.id)) {
+                handshake = await signal.startSessionWithContact(user.id, activeChat.id);
+            }
+
+            const enc = await signal.encryptOutgoingMessage(user.id, activeChat.id, newMessage);
+            const payload = { 
+                recipient_id: activeChat.id, 
+                ciphertext: enc.ciphertext, 
+                nonce: enc.nonce, 
+                temp_id: tempId, 
+                ephemeral_public_key: handshake.ephemeralPublicKey || null, 
+                used_opk_id: handshake.usedOpkId ?? null 
+            };
+
+            socketRef.current.send(JSON.stringify(payload));
+            
+            const myMsg = { 
+                sender_id: user.id, 
+                recipient_id: activeChat.id, 
+                content: newMessage, 
+                timestamp: new Date().toISOString(), 
+                temp_id: tempId 
+            };
+            storage.saveLocalMessage(user.id, activeChat.id, myMsg);
+            setMessages(prev => [...prev, myMsg]);
+            setNewMessage("");
+        } catch (err) {
+            console.error("Send failed:", err);
+        }
+    };
+
+    return (
+        <div className="flex h-screen bg-[#0f172a] text-slate-200 font-sans overflow-hidden">
+            <div className="w-80 bg-[#1e293b] flex flex-col border-r border-slate-700/50">
+                <div className="p-4 border-b border-slate-700/50 flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                        <div className={`w-9 h-9 rounded-full flex items-center justify-center text-white text-sm font-bold ${getAvatarColor(activeChat.username)}`}>
-                            {activeChat.username[0].toUpperCase()}
+                        <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-bold ${getAvatarColor(user.username)}`}>
+                            {user.username[0].toUpperCase()}
                         </div>
-                        <span className="font-semibold text-white">{activeChat.username}</span>
+                        <div>
+                            <h3 className="font-semibold">{user.username}</h3>
+                            <p className="text-xs text-green-400">Online</p>
+                        </div>
                     </div>
-                    <div className="flex gap-4 text-slate-400">
-                        <Phone size={20} className="cursor-pointer hover:text-white transition"/>
-                        <Video size={20} className="cursor-pointer hover:text-white transition"/>
-                        <MoreVertical size={20} className="cursor-pointer hover:text-white transition"/>
-                    </div>
+                    <button onClick={onLogout} className="p-2 hover:bg-slate-700 rounded-full transition text-slate-400 hover:text-red-400">
+                        <LogOut size={18} />
+                    </button>
                 </div>
-
-                {/* הודעות */}
-                <div className="flex-1 overflow-y-auto p-6 space-y-4 custom-scrollbar">
-                    {messages.map((msg, idx) => {
-                         const isMe = Number(msg.sender_id) === Number(user.id);
-                         return (
-                            <div key={idx} className={`flex ${isMe ? "justify-end" : "justify-start"}`}>
-                                <div className={`max-w-[70%] px-4 py-2 rounded-2xl text-sm relative ${
-                                    isMe ? "bg-blue-600 text-white rounded-tr-sm" : "bg-slate-700 text-slate-200 rounded-tl-sm"
-                                }`}>
-                                    <p>{msg.content}</p>
-                                    <span className="text-[10px] opacity-70 block text-right mt-1">
-                                        {new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
-                                    </span>
+                <div className="flex-1 overflow-y-auto px-2 space-y-1 mt-2">
+                    {users.map((u) => (
+                        <div key={u.id} onClick={() => selectUser(u)} className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-all ${activeChat?.id === u.id ? "bg-slate-700/60" : "hover:bg-slate-800"}`}>
+                            <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-medium ${getAvatarColor(u.username)}`}>{u.username[0].toUpperCase()}</div>
+                            <div className="flex-1 min-w-0">
+                                <div className="flex justify-between items-center">
+                                    <h4 className="font-medium truncate">{u.username}</h4>
+                                    {unreadCounts[u.id] > 0 && <span className="bg-blue-600 text-white text-[10px] px-2 py-0.5 rounded-full font-bold shadow-sm">{unreadCounts[u.id]} new</span>}
                                 </div>
                             </div>
-                         );
-                    })}
-                    <div ref={messagesEndRef} />
+                        </div>
+                    ))}
                 </div>
-
-                {/* תיבת טקסט */}
-                <div className="p-4 bg-[#1e293b]/30">
-                    <div className="flex items-center gap-2 bg-slate-800 rounded-full px-4 py-2 border border-slate-700">
-                        <input 
-                            className="flex-1 bg-transparent border-none focus:outline-none text-slate-200 placeholder-slate-500 py-2"
-                            placeholder={`Message ${activeChat.username}...`}
-                            value={newMessage}
-                            onChange={(e) => setNewMessage(e.target.value)}
-                            onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
-                        />
-                        <button onClick={sendMessage} className="p-2 bg-blue-600 rounded-full text-white hover:bg-blue-500 transition shadow-lg shadow-blue-500/20">
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" />
-                            </svg>
-                        </button>
-                    </div>
-                </div>
-            </>
-        ) : (
-            <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
-                <div className="w-20 h-20 bg-slate-800 rounded-full flex items-center justify-center mb-6 border border-slate-700">
-                     <MessageSquare size={32} className="text-blue-500" />
-                </div>
-                <h2 className="text-2xl font-bold text-white mb-2">Select a conversation</h2>
-                <p className="text-slate-400">Choose a contact to start messaging.</p>
             </div>
-        )}
-      </div>
-    </div>
-  );
+            <div className="flex-1 flex flex-col bg-[#0f172a]">
+                {activeChat ? (
+                    <>
+                        <div className="h-16 border-b border-slate-700/50 flex items-center px-6 bg-[#1e293b]/50">
+                            <span className="font-semibold text-white">{activeChat.username}</span>
+                        </div>
+                        <div className="flex-1 overflow-y-auto p-6 space-y-4">
+                            {messages.map((msg, idx) => (
+                                <div key={idx} className={`flex ${Number(msg.sender_id) === Number(user.id) ? "justify-end" : "justify-start"}`}>
+                                    <div className={`max-w-[70%] px-4 py-2 rounded-2xl text-sm ${Number(msg.sender_id) === Number(user.id) ? "bg-blue-600 text-white rounded-tr-none" : "bg-slate-700 text-slate-200 rounded-tl-none"}`}>
+                                        <p>{msg.content}</p>
+                                        <span className="text-[10px] opacity-70 block text-right mt-1">{new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                                    </div>
+                                </div>
+                            ))}
+                            <div ref={messagesEndRef} />
+                        </div>
+                        <div className="p-4 bg-[#1e293b]/30">
+                            <div className="flex items-center gap-2 bg-slate-800 rounded-full px-4 py-2 border border-slate-700">
+                                <input className="flex-1 bg-transparent focus:outline-none text-slate-200" placeholder="Message..." value={newMessage} onChange={(e) => setNewMessage(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && sendMessage()} />
+                                <button onClick={sendMessage} className="p-2 bg-blue-600 rounded-full text-white hover:bg-blue-500 transition shadow-lg shadow-blue-500/20">
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" /></svg>
+                                </button>
+                            </div>
+                        </div>
+                    </>
+                ) : (
+                    <div className="flex-1 flex flex-col items-center justify-center text-slate-400">
+                        <MessageSquare size={48} className="mb-4 opacity-10" />
+                        <h2 className="text-xl font-bold">Select a conversation</h2>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
 }
 
 export default Chat;
