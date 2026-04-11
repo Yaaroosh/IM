@@ -19,6 +19,7 @@ class Message(Base):
     recipient_id = Column(Integer, ForeignKey("users.id"))
     ciphertext = Column(Text, nullable=False)
     nonce = Column(String, nullable=False)
+    ratchet_key = Column(String, nullable=True)
     ephemeral_public_key = Column(String, nullable=True)
     used_opk_id = Column(Integer, nullable=True)
     sender_identity_key = Column(String, nullable=True)

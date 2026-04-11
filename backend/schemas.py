@@ -20,6 +20,7 @@ class MessageCreate(BaseModel):
     recipient_id: int
     ciphertext: str
     nonce: str
+    ratchet_key: str
     # Optional fields for the X3DH Handshake (Included only in the first message of a session)
     ephemeral_public_key: Optional[str] = None
     used_opk_id: Optional[int] = None
@@ -32,6 +33,7 @@ class MessagePublic(BaseModel):
     recipient_id: int
     ciphertext: str
     nonce: str
+    ratchet_key: Optional[str] = None
     timestamp: datetime
     is_read: bool
     ephemeral_public_key: Optional[str] = None

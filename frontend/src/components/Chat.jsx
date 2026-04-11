@@ -83,11 +83,12 @@ function Chat({ user, onLogout }) {
                                 msg.sender_id,
                                 msg.ephemeral_public_key,
                                 msg.sender_identity_key,
+                                msg.ratchet_key,
                                 msg.used_opk_id
                             );
                         }
 
-                        const decrypted = await signal.decryptReceivedMessage(user.id, msg.sender_id, msg.ciphertext, msg.nonce, msg.id);
+                        const decrypted = await signal.decryptReceivedMessage(user.id, msg.sender_id, msg.ciphertext, msg.nonce,msg.ratchet_key, msg.id);
                         const messageObj = { ...msg, content: decrypted };
                         
                         storage.saveLocalMessage(user.id, contact.id, messageObj);
@@ -191,10 +192,11 @@ function Chat({ user, onLogout }) {
                                 msgSenderId,
                                 msg.ephemeral_public_key,
                                 msg.sender_identity_key,
+                                msg.ratchet_key,
                                 msg.used_opk_id);
                         }
 
-                        const decryptedContent = await signal.decryptReceivedMessage(user.id, msgSenderId, msg.ciphertext, msg.nonce, msg.id);
+                        const decryptedContent = await signal.decryptReceivedMessage(user.id, msgSenderId, msg.ciphertext, msg.nonce,msg.ratchet_key, msg.id);
                         const messageObj = { ...msg, content: decryptedContent, timestamp: new Date().toISOString() };
 
                         storage.saveLocalMessage(user.id, msgSenderId, messageObj);
@@ -257,7 +259,8 @@ function Chat({ user, onLogout }) {
                 temp_id: tempId, 
                 ephemeral_public_key: handshake.ephemeralPublicKey || null, 
                 used_opk_id: handshake.usedOpkId ?? null,
-                sender_identity_key: myPublicIdentityKey
+                sender_identity_key: myPublicIdentityKey,
+                ratchet_key: enc.ratchetKey
             };
 
             socketRef.current.send(JSON.stringify(payload));
