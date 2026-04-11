@@ -46,6 +46,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: int, db: Session = D
             temp_id = data.get("temp_id")
             ephemeral_public_key = data.get("ephemeral_public_key")
             used_opk_id = data.get("used_opk_id")
+            sender_identity_key = data.get("sender_identity_key")
 
             if recipient_id and ciphertext and nonce:
                 # Save to Database 
@@ -55,7 +56,8 @@ async def websocket_endpoint(websocket: WebSocket, user_id: int, db: Session = D
                     ciphertext=ciphertext,
                     nonce=nonce,
                     ephemeral_public_key=ephemeral_public_key,
-                    used_opk_id=used_opk_id
+                    used_opk_id=used_opk_id,
+                    sender_identity_key=sender_identity_key
                 )
                 db.add(message)
                 db.commit()
@@ -70,6 +72,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: int, db: Session = D
                     "nonce": nonce,
                     "ephemeral_public_key": ephemeral_public_key,
                     "used_opk_id": used_opk_id,
+                    "sender_identity_key": sender_identity_key,
                     "timestamp": str(message.timestamp),
                     "temp_id": temp_id 
                 }

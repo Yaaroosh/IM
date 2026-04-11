@@ -23,6 +23,7 @@ class MessageCreate(BaseModel):
     # Optional fields for the X3DH Handshake (Included only in the first message of a session)
     ephemeral_public_key: Optional[str] = None
     used_opk_id: Optional[int] = None
+    sender_identity_key: Optional[str] = None
 
 class MessagePublic(BaseModel):
     """Schema for retrieving messages - matches the Signal E2EE database structure."""
@@ -35,6 +36,7 @@ class MessagePublic(BaseModel):
     is_read: bool
     ephemeral_public_key: Optional[str] = None
     used_opk_id: Optional[int] = None
+    sender_identity_key: Optional[str] = None
 
     class Config:
         from_attributes = True
