@@ -19,6 +19,7 @@ function Chat({ user, onLogout }) {
     const [messages, setMessages] = useState([]);
     const [newMessage, setNewMessage] = useState("");
     const [unreadCounts, setUnreadCounts] = useState({});
+    const [myPublicIdentityKey, setMyPublicIdentityKey] = useState(null);
 
     const socketRef = useRef(null);
     const messagesEndRef = useRef(null);
@@ -77,13 +78,17 @@ function Chat({ user, onLogout }) {
 
                     try {
                         if (msg.ephemeral_public_key) {
-                            const keysRes = await axios.get(`http://localhost:8000/keys/identity/${msg.sender_id}`);
                             await signal.initializeSessionAsReceiver(
-                                user.id, msg.sender_id, msg.ephemeral_public_key, keysRes.data.identity_key, msg.used_opk_id
+                                user.id,
+                                msg.sender_id,
+                                msg.ephemeral_public_key,
+                                msg.sender_identity_key,
+                                msg.ratchet_key,
+                                msg.used_opk_id
                             );
                         }
 
-                        const decrypted = await signal.decryptReceivedMessage(user.id, msg.sender_id, msg.ciphertext, msg.nonce, msg.id);
+                        const decrypted = await signal.decryptReceivedMessage(user.id, msg.sender_id, msg.ciphertext, msg.nonce,msg.ratchet_key, msg.id);
                         const messageObj = { ...msg, content: decrypted };
                         
                         storage.saveLocalMessage(user.id, contact.id, messageObj);
@@ -157,6 +162,9 @@ function Chat({ user, onLogout }) {
     useEffect(() => {
         const init = async () => {
             try {
+                const keyRes = await axios.get(`http://localhost:8000/keys/${user.id}`);
+                setMyPublicIdentityKey(keyRes.data.identity_key);
+
                 const currentUsers = await fetchUsers();
                 await syncOfflineMessages(currentUsers);
 
@@ -179,11 +187,16 @@ function Chat({ user, onLogout }) {
 
                     try {
                         if (msg.ephemeral_public_key) {
-                            const res = await axios.get(`http://localhost:8000/keys/identity/${msg.sender_id}`);
-                            await signal.initializeSessionAsReceiver(user.id, msgSenderId, msg.ephemeral_public_key, res.data.identity_key, msg.used_opk_id);
+                            await signal.initializeSessionAsReceiver(
+                                user.id,
+                                msgSenderId,
+                                msg.ephemeral_public_key,
+                                msg.sender_identity_key,
+                                msg.ratchet_key,
+                                msg.used_opk_id);
                         }
 
-                        const decryptedContent = await signal.decryptReceivedMessage(user.id, msgSenderId, msg.ciphertext, msg.nonce, msg.id);
+                        const decryptedContent = await signal.decryptReceivedMessage(user.id, msgSenderId, msg.ciphertext, msg.nonce,msg.ratchet_key, msg.id);
                         const messageObj = { ...msg, content: decryptedContent, timestamp: new Date().toISOString() };
 
                         storage.saveLocalMessage(user.id, msgSenderId, messageObj);
@@ -234,13 +247,20 @@ function Chat({ user, onLogout }) {
             }
 
             const enc = await signal.encryptOutgoingMessage(user.id, activeChat.id, newMessage);
+            const myKeysBundle = storage.getMyKeys(user.id);
+            if (!myKeysBundle || !myKeysBundle.ik) {
+                console.error("Missing local identity keys!");
+                return; 
+            }
             const payload = { 
                 recipient_id: activeChat.id, 
                 ciphertext: enc.ciphertext, 
                 nonce: enc.nonce, 
                 temp_id: tempId, 
                 ephemeral_public_key: handshake.ephemeralPublicKey || null, 
-                used_opk_id: handshake.usedOpkId ?? null 
+                used_opk_id: handshake.usedOpkId ?? null,
+                sender_identity_key: myPublicIdentityKey,
+                ratchet_key: enc.ratchetKey
             };
 
             socketRef.current.send(JSON.stringify(payload));

@@ -10,7 +10,7 @@ python -m venv venv
 
 # Activate the virtual environment
 # For Windows:
-venv\Scripts\Activate
+.\venv\Scripts\Activate
 # (If you get an error, run: Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser, then try again)
 # For Mac/Linux:
 # source venv/bin/activate

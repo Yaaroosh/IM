@@ -46,20 +46,23 @@ export function removeUsedOPK(userId, usedKeyId) {
 }
 
 
-// Saves the current chain key for a specific contact of a specific user
-export function saveSessionState(myUserId, contactId, chainKeyBase64) {
+// Saves the current session state (Root Key, Ratchet Keys, Chains() for a contact to Local Storage
+export function saveSessionState(myUserId, contactId, sessionObject) {
     try {
-        localStorage.setItem(`${SESSION_PREFIX}${myUserId}_with_${contactId}`, chainKeyBase64);
+        const serialized = JSON.stringify(sessionObject);
+        localStorage.setItem(`${SESSION_PREFIX}${myUserId}_with_${contactId}`, serialized);
     } catch (error) {
         console.error(`Error saving session state for contact ${contactId}:`, error);
     }
 }
 
 
-// Loads the current chain key to continue a conversation
+// Loads the current session state to continue a conversation
 export function getSessionState(myUserId, contactId) {
     try {
-        return localStorage.getItem(`${SESSION_PREFIX}${myUserId}_with_${contactId}`);
+        const serialized = localStorage.getItem(`${SESSION_PREFIX}${myUserId}_with_${contactId}`);
+        if (!serialized) return null;
+        return JSON.parse(serialized);
     } catch (error) {
         console.error(`Error loading session state for contact ${contactId}:`, error);
         return null;

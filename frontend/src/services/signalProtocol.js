@@ -60,6 +60,7 @@ export async function registerUser(userId) {
 // ==========================================
 // 2. X3DH Handshake (Start Session)
 //===========================================
+// Initiates an X3DH handshake to establish the initial Root Key with a contact. 
 export async function startSessionWithContact(myUserId, contactId) {
     try {
         console.log(`Starting X3DH handshake with ${contactId}`);
@@ -96,18 +97,30 @@ export async function startSessionWithContact(myUserId, contactId) {
 
         console.log("%c[SENDER DEBUG] DH4:", "color: #3b82f6", dh4 || "EMPTY/NULL");
 
-        // Derive the initial Chain Key
-        const initialChainKey = crypto.deriveInitialChainKey(dh1, dh2, dh3, dh4);
+        // X3DH: Deriving the starting Root Key of the entire Double Ratchet session
+        const initialRootKey = crypto.deriveInitialRootKey(dh1, dh2, dh3, dh4);
 
-        // Save the session state (Chain Key) in local storage
-        storage.saveSessionState(myUserId, contactId, initialChainKey);
+        // Generate our first Ratchet Key Pair for the DH Ratchet
+        const myRatchetKey = crypto.generateKeyPair();
+
+        const sessionState ={
+            rootKey: initialRootKey,
+            sendingChain: null,
+            receivingChain: null,
+            ourRatchetKey: myRatchetKey,
+            theirRatchetPublicKey: contactBundle.signed_prekey.public_key
+        }
+
+        // Save the session state in local storage
+        storage.saveSessionState(myUserId, contactId, sessionState);
         
         console.log(`X3DH complete! Chain Key established with ${contactId}`);
 
-        console.log("%c[SENDER] Initial Chain Key:", "color: orange", initialChainKey);
+        console.log("%c[SENDER] Initial Root Key:", "color: orange", initialRootKey);
         
         return {
             ephemeralPublicKey: myEphemeralKey.publicKey,
+            ratchetPublicKey: myRatchetKey.publicKey,
             usedOpkId: usedOpkId
         };
 
@@ -118,7 +131,7 @@ export async function startSessionWithContact(myUserId, contactId) {
 }
 
 // Receiver side: Completes the X3DH key exchange using the sender's ephemeral key and optional OPK ID attached to the first message
-export async function initializeSessionAsReceiver(myUserId, contactId, theirEphemeralKey, theirIdentityKey, theirOpkId = null) {
+export async function initializeSessionAsReceiver(myUserId, contactId, theirEphemeralKey, theirIdentityKey, theirRatchetKey,theirOpkId = null) {
     try {
         console.log(`Initializing incoming session from contact: ${contactId}`);
 
@@ -147,11 +160,30 @@ export async function initializeSessionAsReceiver(myUserId, contactId, theirEphe
             }
         }
 
-        // Derive the exact same initial Chain Key
-        const initialChainKey = crypto.deriveInitialChainKey(dh1, dh2, dh3, dh4);
+        // Derive the exact same initial Root Key
+        const initialRootKey = crypto.deriveInitialRootKey(dh1, dh2, dh3, dh4);
+
+        const myFirstRatchetKey = crypto.generateKeyPair();
+
+        const sessionState = {
+            rootKey: initialRootKey,
+            sendingChain: null,
+            receivingChain: null,
+            ourRatchetKey: myFirstRatchetKey, // Generate our first Ratchet Key Pair
+            theirRatchetPublicKey: theirRatchetKey
+        };
+
+        // First DH Ratchet step: Creates the initial chain for receiving the first message
+        const dhInitial = crypto.computeDH(myKeys.spk, theirRatchetKey);
+        const { nextRootKey, nextChainKey: initialChainKey } = crypto.kdfRK(sessionState.rootKey, dhInitial);
+        sessionState.rootKey = nextRootKey;
+        sessionState.receivingChain = {
+            chainKey: initialChainKey,
+            messageNumber: 0
+        }
 
         // Save the established session state
-        storage.saveSessionState(myUserId, contactId, initialChainKey);
+        storage.saveSessionState(myUserId, contactId, sessionState);
         
         if (theirOpkId !== null && theirOpkId !== undefined) {
             storage.removeUsedOPK(myUserId, theirOpkId);
@@ -159,9 +191,7 @@ export async function initializeSessionAsReceiver(myUserId, contactId, theirEphe
         
         console.log(`Session with ${contactId} successfully established as receiver.`);
 
-        console.log("%c[RECEIVER] Initial Chain Key:", "color: orange", initialChainKey);
-
-        return initialChainKey;
+        return sessionState;
 
     } catch (error) {
         console.error("Failed to initialize receiver session:", error);
@@ -173,40 +203,47 @@ export async function initializeSessionAsReceiver(myUserId, contactId, theirEphe
 // ==========================================
 // 3. Encrypted Message
 // ==========================================
+//Encrypts a message using the Double Ratchet (advances both Root and Chain keys)
 export async function encryptOutgoingMessage(myUserId, contactId, plaintext) {
     try {
-        let currentChainKey = storage.getSessionState(myUserId, contactId);
+        let session = storage.getSessionState(myUserId, contactId);
         
-        if (!currentChainKey) {
-            throw new Error(`No active session with ${contactId}.`);
+        // ASYMMETRIC RATCHET: If this is the first message after session establishment, we need to perform the initial DH Ratchet step
+        if (!session.sendingChain) {
+            const dhResult = crypto.computeDH(session.ourRatchetKey.secretKey, session.theirRatchetPublicKey);
+            const { nextRootKey, nextChainKey: initialChainKey } = crypto.kdfRK(session.rootKey, dhResult);
+            
+            session.rootKey = nextRootKey;
+            session.sendingChain = {
+                chainKey: initialChainKey,
+                messageNumber: 0
+            };
         }
+        
+        // SYMMETRIC RATCHET: Derives a new unique Message Key for every single message
+        const { messageKey, nextChainKey } = crypto.kdfCK(session.sendingChain.chainKey);
 
-        // Advances the symmetric ratchet to derive a new message key
-        const derived = crypto.deriveNextKeys(currentChainKey);
-        console.log("Derived keys:", derived); 
+        session.sendingChain.chainKey = nextChainKey;
+        session.sendingChain.messageNumber++;
+        storage.saveSessionState(myUserId, contactId, session);
 
-        if (!derived || !derived.messageKey) {
-            throw new Error("Failed to derive Message Key");
-        }
 
-        console.log(`%c[SENDER] Message Key: ${derived.messageKey}`, "color: blue; font-weight: bold");
+        console.log(`%c[SENDER] Message Key: ${messageKey}`, "color: blue; font-weight: bold");
 
         // encrypts the plaintext
-        const encryptedData = crypto.encryptMessage(plaintext, derived.messageKey);
+        const encryptedData = crypto.encryptMessage(plaintext, messageKey);
         console.log("Encrypted payload:", encryptedData);
 
-        console.log(`%c[SENDER] Nonce: ${encryptedData.nonce}`, "color: blue");
-
-        // update the chain key in the local Storage 
-        storage.saveSessionState(myUserId, contactId, derived.nextChainKey);
+        //console.log(`%c[SENDER] Nonce: ${encryptedData.nonce}`, "color: blue");
 
         return {
             ciphertext: encryptedData.ciphertext,
-            nonce: encryptedData.nonce
+            nonce: encryptedData.nonce,
+            ratchetKey: session.ourRatchetKey.publicKey
         };
 
     } catch (error) {
-        console.error("Critical Failure in encryptOutgoingMessage:", error);
+        console.error("Critical Encryption Error:", error);
         throw error;
     }
 }
@@ -216,27 +253,49 @@ const decryptedCache = new Set();
 // ==========================================
 // 4. Decrypt Received Message
 // ==========================================
-export async function decryptReceivedMessage(myUserId, contactId, ciphertext, nonce, msgId) {
+// Decrypts a message and advances the ratchets based on the sender's ratchet key.
+export async function decryptReceivedMessage(myUserId, contactId, ciphertext, nonce, theirRatchetPublicKey, msgId) {
     if (msgId && decryptedCache.has(msgId)) {
-        console.warn(`%c[BLOCKER] Message ${msgId} already decrypted! Stopping double ratchet.`, "color: #fbbf24; font-weight: bold;");
         throw new Error("ALREADY_DECRYPTED"); 
     }
 
     try {
-        let currentChainKey = storage.getSessionState(myUserId, contactId);
+        let session = storage.getSessionState(myUserId, contactId);
 
-        if (!currentChainKey) {
+        if (!session) {
             throw new Error(`No active session`);
         }
 
-        // Advance the ratchet to generate the message key and the next chain key
-        const { messageKey, nextChainKey } = crypto.deriveNextKeys(currentChainKey);
+        // ASYMMETRIC RATCHET: Detects if the sender has advanced their ratchet key
+        const isNewRatchetKey = theirRatchetPublicKey !== session.theirRatchetPublicKey;
+
+        if (isNewRatchetKey) {
+            console.log("%c[RATCHET] Detected new ratchet key. Advancing the ratchet...", "color: #10b981; font-weight: bold");
+            const dhResult = crypto.computeDH(session.ourRatchetKey.secretKey, theirRatchetPublicKey);
+            const { nextRootKey, nextChainKey: initialChainKey } = crypto.kdfRK(session.rootKey, dhResult);
+
+            session.rootKey = nextRootKey;
+            session.theirRatchetPublicKey = theirRatchetPublicKey;
+
+            session.receivingChain = {
+                chainKey: initialChainKey,
+                messageNumber: 0
+            };
+
+            // SELF-HEALING: Generates a new local ratchet key for our next reply
+            session.ourRatchetKey = crypto.generateKeyPair();
+            session.sendingChain = null;
+        }
+
+        // SYMMETRIC RATCHET: Advance the symmetric ratchet to generate the message key and the next chain key
+        const { messageKey, nextChainKey } = crypto.kdfCK(session.receivingChain.chainKey);
+
+        session.receivingChain.chainKey = nextChainKey;
+        session.receivingChain.messageNumber++;
+        storage.saveSessionState(myUserId, contactId, session);
 
         console.log(`%c[RECEIVER] Message Key: ${messageKey}`, "color: green; font-weight: bold");
         console.log(`%c[RECEIVER] Nonce from msg: ${nonce}`, "color: green");
-
-        // Update the local storage with the new chain key
-        storage.saveSessionState(myUserId, contactId, nextChainKey);
 
         if (msgId) decryptedCache.add(msgId);
 
