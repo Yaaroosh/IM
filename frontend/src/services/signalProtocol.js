@@ -160,6 +160,8 @@ export async function initializeSessionAsReceiver(myUserId, contactId, theirEphe
             }
         }
 
+        console.log("%c[RECEIVER DEBUG] DH4:", "color: #10b981", dh4 || "EMPTY/NULL");
+
         // Derive the exact same initial Root Key
         const initialRootKey = crypto.deriveInitialRootKey(dh1, dh2, dh3, dh4);
 
@@ -190,6 +192,7 @@ export async function initializeSessionAsReceiver(myUserId, contactId, theirEphe
         }
         
         console.log(`Session with ${contactId} successfully established as receiver.`);
+        console.log("%c[RECEIVER] Initial Root Key:", "color: orange", initialRootKey);
 
         return sessionState;
 
@@ -233,8 +236,6 @@ export async function encryptOutgoingMessage(myUserId, contactId, plaintext) {
         // encrypts the plaintext
         const encryptedData = crypto.encryptMessage(plaintext, messageKey);
         console.log("Encrypted payload:", encryptedData);
-
-        //console.log(`%c[SENDER] Nonce: ${encryptedData.nonce}`, "color: blue");
 
         return {
             ciphertext: encryptedData.ciphertext,
@@ -295,7 +296,6 @@ export async function decryptReceivedMessage(myUserId, contactId, ciphertext, no
         storage.saveSessionState(myUserId, contactId, session);
 
         console.log(`%c[RECEIVER] Message Key: ${messageKey}`, "color: green; font-weight: bold");
-        console.log(`%c[RECEIVER] Nonce from msg: ${nonce}`, "color: green");
 
         if (msgId) decryptedCache.add(msgId);
 
