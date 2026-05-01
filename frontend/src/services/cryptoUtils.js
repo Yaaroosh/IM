@@ -162,26 +162,3 @@ export function deriveInitialRootKey(dh1Base64, dh2Base64, dh3Base64, dh4Base64 
     const RootKey = hashResult.slice(0, 32); 
     return toBase64(RootKey);
 }
-
-
-/** 
-export function deriveNextKeys(currentChainKeyBase64) {
-    const currentChainKeyUint8 = util.decodeBase64(currentChainKeyBase64);
-
-    const hmac = (key, data) => {
-    const hash = sha512.hmac.create(key);
-    hash.update(data);
-    return new Uint8Array(hash.array());
-};
-    
-    const constantForMessageKey = new Uint8Array([1]);
-    const constantForNextChainKey = new Uint8Array([2])
-    
-    const messageKeyUint8 = hmac(currentChainKeyUint8, constantForMessageKey).slice(0, 32);
-    const nextChainKeyUint8 = hmac(currentChainKeyUint8, constantForNextChainKey).slice(0, 32);
-    
-    return {
-        messageKey: util.encodeBase64(messageKeyUint8),
-        nextChainKey: util.encodeBase64(nextChainKeyUint8)
-    };
-}*/
