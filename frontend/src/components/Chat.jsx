@@ -162,7 +162,7 @@ function Chat({ user, onLogout }) {
     useEffect(() => {
         const init = async () => {
             try {
-                const keyRes = await axios.get(`http://localhost:8000/keys/${user.id}`);
+                const keyRes = await axios.get(`http://localhost:8000/keys/identity/${user.id}`);
                 setMyPublicIdentityKey(keyRes.data.identity_key);
 
                 const currentUsers = await fetchUsers();

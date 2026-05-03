@@ -3,11 +3,11 @@ const SESSION_PREFIX = 'signal_session_';
 
 
 // Saves the user's private keys bundle (IK, SPK, OPKs) in Local Storage
-export function saveMyKeys(userId, keys) {
+export function saveMyKeys(userId, keys, reason = "General update") {
     try {
         const serialized = JSON.stringify(keys);
         localStorage.setItem(`${MY_KEYS_PREFIX}${userId}`, serialized);
-        console.log(`My keys successfully saved for user: ${userId}`);
+        console.log(`My keys successfully saved for user: ${userId} - Reason: ${reason}`);
     } catch (error) {
         console.error("Error saving my keys:", error);
     }
@@ -37,7 +37,7 @@ export function removeUsedOPK(userId, usedKeyId) {
         keysBundle.opks = keysBundle.opks.filter(k => String(k.key_id) !== String(usedKeyId));
 
         if (keysBundle.opks.length < originalLength) {
-            saveMyKeys(userId, keysBundle);
+            saveMyKeys(userId, keysBundle, `Removed OPK ID ${usedKeyId}`);
             console.log(`OPK with ID ${usedKeyId} successfully removed.`);
         }
     } catch (error) {

@@ -29,7 +29,7 @@ export async function registerUser(userId) {
                 secretKey: k.secretKey
             }))
         };
-        storage.saveMyKeys(userId, myPrivateKeys);
+        storage.saveMyKeys(userId, myPrivateKeys, "Initial Registration");
 
         // Prepare the public bundle exactly as keys.py expects for POST
         const publicBundle = {
@@ -160,8 +160,12 @@ export async function initializeSessionAsReceiver(myUserId, contactId, theirEphe
             }
         }
 
+        console.log("%c[RECEIVER DEBUG] DH4:", "color: #10b981", dh4 || "EMPTY/NULL");
+
         // Derive the exact same initial Root Key
         const initialRootKey = crypto.deriveInitialRootKey(dh1, dh2, dh3, dh4);
+        console.log(`Session with ${contactId} successfully established as receiver.`);
+        console.log("%c[RECEIVER] Initial Root Key:", "color: orange", initialRootKey);
 
         const myFirstRatchetKey = crypto.generateKeyPair();
 
@@ -177,6 +181,9 @@ export async function initializeSessionAsReceiver(myUserId, contactId, theirEphe
         const dhInitial = crypto.computeDH(myKeys.spk, theirRatchetKey);
         const { nextRootKey, nextChainKey: initialChainKey } = crypto.kdfRK(sessionState.rootKey, dhInitial);
         sessionState.rootKey = nextRootKey;
+
+        console.log(`%c[ROOT] Root Key advanced for first RECEIVING chain: ${sessionState.rootKey}`, "color: #ec4899; font-weight: bold");
+
         sessionState.receivingChain = {
             chainKey: initialChainKey,
             messageNumber: 0
@@ -188,8 +195,6 @@ export async function initializeSessionAsReceiver(myUserId, contactId, theirEphe
         if (theirOpkId !== null && theirOpkId !== undefined) {
             storage.removeUsedOPK(myUserId, theirOpkId);
         }
-        
-        console.log(`Session with ${contactId} successfully established as receiver.`);
 
         return sessionState;
 
@@ -214,6 +219,9 @@ export async function encryptOutgoingMessage(myUserId, contactId, plaintext) {
             const { nextRootKey, nextChainKey: initialChainKey } = crypto.kdfRK(session.rootKey, dhResult);
             
             session.rootKey = nextRootKey;
+
+            console.log(`%c[ROOT] Root Key advanced for first sending chain: ${session.rootKey}`, "color: #ec4899; font-weight: bold");
+
             session.sendingChain = {
                 chainKey: initialChainKey,
                 messageNumber: 0
@@ -222,6 +230,10 @@ export async function encryptOutgoingMessage(myUserId, contactId, plaintext) {
         
         // SYMMETRIC RATCHET: Derives a new unique Message Key for every single message
         const { messageKey, nextChainKey } = crypto.kdfCK(session.sendingChain.chainKey);
+
+        console.log(`%c[SENDER] Chain Ratchet Step: ${session.sendingChain.messageNumber}`, "color: #6366f1; font-weight: bold");
+        console.log(`%c[SENDER] Message Key (Derived): ${messageKey}`, "color: blue; font-weight: bold");
+        console.log(`%c[SENDER] Next Chain Key (Saved): ${nextChainKey}`, "color: #818cf8; font-style: italic");
 
         session.sendingChain.chainKey = nextChainKey;
         session.sendingChain.messageNumber++;
@@ -233,8 +245,6 @@ export async function encryptOutgoingMessage(myUserId, contactId, plaintext) {
         // encrypts the plaintext
         const encryptedData = crypto.encryptMessage(plaintext, messageKey);
         console.log("Encrypted payload:", encryptedData);
-
-        //console.log(`%c[SENDER] Nonce: ${encryptedData.nonce}`, "color: blue");
 
         return {
             ciphertext: encryptedData.ciphertext,
@@ -275,6 +285,9 @@ export async function decryptReceivedMessage(myUserId, contactId, ciphertext, no
             const { nextRootKey, nextChainKey: initialChainKey } = crypto.kdfRK(session.rootKey, dhResult);
 
             session.rootKey = nextRootKey;
+
+            console.log(`%c[ROOT] Root Key updated (Asymmetric Step): ${session.rootKey}`, "color: #ec4899; font-weight: bold");
+
             session.theirRatchetPublicKey = theirRatchetPublicKey;
 
             session.receivingChain = {
@@ -290,12 +303,15 @@ export async function decryptReceivedMessage(myUserId, contactId, ciphertext, no
         // SYMMETRIC RATCHET: Advance the symmetric ratchet to generate the message key and the next chain key
         const { messageKey, nextChainKey } = crypto.kdfCK(session.receivingChain.chainKey);
 
+        console.log(`%c[RECEIVER] Chain Ratchet Step: ${session.receivingChain.messageNumber}`, "color: #10b981; font-weight: bold");
+        console.log(`%c[RECEIVER] Message Key (Derived): ${messageKey}`, "color: green; font-weight: bold");
+        console.log(`%c[RECEIVER] Next Chain Key (Saved): ${nextChainKey}`, "color: #34d399; font-style: italic");
+
         session.receivingChain.chainKey = nextChainKey;
         session.receivingChain.messageNumber++;
         storage.saveSessionState(myUserId, contactId, session);
 
         console.log(`%c[RECEIVER] Message Key: ${messageKey}`, "color: green; font-weight: bold");
-        console.log(`%c[RECEIVER] Nonce from msg: ${nonce}`, "color: green");
 
         if (msgId) decryptedCache.add(msgId);
 
