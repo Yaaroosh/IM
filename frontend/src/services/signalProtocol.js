@@ -29,7 +29,7 @@ export async function registerUser(userId) {
                 secretKey: k.secretKey
             }))
         };
-        storage.saveMyKeys(userId, myPrivateKeys);
+        storage.saveMyKeys(userId, myPrivateKeys, "Initial Registration");
 
         // Prepare the public bundle exactly as keys.py expects for POST
         const publicBundle = {
