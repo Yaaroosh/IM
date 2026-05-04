@@ -213,7 +213,8 @@ export async function encryptOutgoingMessage(myUserId, contactId, plaintext) {
     try {
         let session = storage.getSessionState(myUserId, contactId);
         
-        // ASYMMETRIC RATCHET: If this is the first message after session establishment, we need to perform the initial DH Ratchet step
+        // ASYMMETRIC RATCHET: Perform a DH Ratchet step if we don't have a sending chain
+        // This happens on the first message of a session OR after receiving a new ratchet key from the contact
         if (!session.sendingChain) {
             const dhResult = crypto.computeDH(session.ourRatchetKey.secretKey, session.theirRatchetPublicKey);
             const { nextRootKey, nextChainKey: initialChainKey } = crypto.kdfRK(session.rootKey, dhResult);

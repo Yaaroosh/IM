@@ -37,14 +37,6 @@ export function generateOneTimePreKeys(count) {
     return opks;
 }
 
-// Derives a public key from a given private key.
-// Used during the Double Ratchet process to generate ephemeral public keys.
-export function getPublicKey(privateKeyBase64) {
-    const priv = fromBase64(privateKeyBase64);
-    const pub = nacl.scalarMult.base(priv); 
-    return toBase64(pub);
-}
-
 // Performs an Elliptic-Curve Diffie-Hellman (ECDH) to get a shared secret
 export function computeDH(myPrivateKeyBase64, theirPublicKeyBase64) {
     try {
